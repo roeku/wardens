@@ -84,3 +84,22 @@ One entry per decision, newest at the bottom. Format:
 - `hash32` and `Rng` match the spec's JS formula on reference values. 180 maps (3 kinds × 3 widths × 20 seeds) are valid, with every site reachable.
 **Rejected:** a shared-output script that diffs native against WASM at run time (needs file access from the WASM test); FNV-1a 32-bit (more collisions for no gain).
 **Spec:** docs/spec/03-land.md §1–§3, docs/spec/04-battle.md §1–§3, docs/spec/01-flow.md §8.
+
+## D-06 | 2026-10-28 | Day 1 block C: the pixel pipeline, and three changes that keep panning still
+**Decision:** the pipeline follows 02-look.md §1–§3: art-pixel target, CELL, POST with `uSub`, no canvas depth, colour management off, toon ramp, the ortho 30° camera, ZOOMS, and the daylight table. The land is the WASM height grid in flat grass. Three choices go beyond the spec, all so that a slow pan changes the picture only by whole-pixel shifts:
+1. **The camera stands on a fixed plane 150 back along the view**, not 150 back from the focus. An ortho picture is the same either way, but with the focus-relative camera every depth value moved as the focus crossed hills, and the depth outlines flipped single pixels.
+2. **The shadow camera is snapped to its own texel grid and to a fixed plane along the light, and re-centres only after the focus has drifted 4.5 of its 6 tiles of margin.** Re-fitting it every frame made shadow edges flicker at zoom 16.
+3. **The night's Bayer dither is indexed by `c + uOrigin`** (the camera's position in whole art pixels), so it stays fixed to the world instead of crawling across it while panning.
+**Also:**
+- `?tier=high|mid|low` picks the shadow map size and the canvas resolution. Choosing the tier by GPU name, and the frame-time governor, come later.
+- `?kind=keep|town|ford` picks the map kind, until the campaign does.
+- Camera controls are temporary until the pointer state machine (day 4): a drag pans, the wheel steps the zoom per 90 deltaY, arrows/WASD pan at 520 px/s, + and − zoom.
+- The dev server's `/__shot` saves `out/shots/<name>.png`. `@types/node` is added for the Vite config's own typecheck (`web/tsconfig.node.json`).
+- `window.__v` has `shot`, `zoom`, `focus`, `night`, `grey`, `state` and `shimmer`.
+**Why (gate, measured with `__v.shimmer`):** it pans in 0.1–0.13 art-pixel steps in four directions and checks that every change of the art-pixel image is a whole-pixel shift of the frame before.
+- Across all 9 zooms (2,160 frames), no frame changed without the view shifting.
+- 9 frames, at zooms 19 and 34, carried one stray pixel out of ~197,000: GPU rounding exactly on a triangle or outline edge.
+- Before fixes 1 and 2, up to 18 frames in 80 changed while the view had not moved.
+- Shots at zoom 7, 16 and 34 (plus night and pause) are in `out/shots/c-*.png`.
+**Rejected:** one shadow camera over the whole map (stable, but 2–2.5 art pixels per shadow texel at zoom 34); a shadow camera re-fitted every frame (the flicker above).
+**Spec:** docs/spec/02-look.md §1–§3, §8.
