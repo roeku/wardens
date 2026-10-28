@@ -264,3 +264,170 @@ One entry per decision, newest at the bottom. Format:
 **Why (measured):** native `make` 15.5 / 21.4 / 27.4 ms for widths 48 / 64 / 80; WASM in the browser 18 / 25 / 33 ms warm, 20 / 28 / 38 ms in a cold worker (37–44 ms round trip). Under load (other jobs at load average 50–90) the same WASM took 46 / 62 / 82 ms, and the very first call on a cold page 163 ms; an old phone is 5–10× slower still. §10 asks for the worker from day one.
 **Rejected:** inline only (over 50 ms for 64 and 80 under load, and the spec measured 1.4–2.3 s on an old phone).
 **Spec:** 03-land.md §10; docs/engine/ENGINE.md "Performance" 2.
+
+## D-09 | 2026-10-28 | Day 2 part B: the men, banners and the units lab (02-look §5–§6, §10; 04-battle §9)
+**Summary:**
+- `web/src/view/figures/` builds every soldier from about 50 vertex-painted parts, one InstancedMesh per part shared by all figures, posed procedurally into the instance buffers.
+- Banners and shields come from generated atlases. `web/labs/units.html` (dev only) shows every kind for both teams.
+- The game drives it from day 3 through `Figures.update({ men, banners, … })`.
+- Built by a delegated agent; checked again before commit.
+**Gate (measured):**
+- **Standing figures, no flicker at any of the 9 zooms:**
+  - My re-check, fresh lab load with defaults (banners on), an odd-sized target 371×355: camera drift right and figure drift up, at zooms 7–34, gave 0 bad frames in every case.
+  - My first re-check had found 500–900 stray pixels on the banners at zooms ≤ 18, and a few on the men at 34.
+  - The cause: on odd-sized targets the exact clip put vertices exactly on pixel centres.
+  - The fix: an offset of half a pixel plus 1/1024 in `figures/material.ts`. The agent confirmed odd, even and mixed sizes.
+**Open:**
+- Moving figures' shadows re-rasterise at their edges: up to 616 px at zoom 34. It needs a shadow projection aligned to the art-pixel grid in `light.ts`.
+- Cloth (capes, tails, banners) waves even with no wind, by the spec's formulas.
+- Beasts are not drawn yet (`registerRig('beast', …)` is the hook). Petrified, torches, dust and the other peoples' outfits are not built.
+- 500 marching men take 5.7 ms to pose. Caching standing poses and lower detail far away are the next levers.
+- The figures need the fog patch wired through `figureShaderHooks` (day 3).
+
+# Decisions: day 2 part B, the figures (men, horses, banners)
+
+Choices made where docs/spec/02-look.md §5–§6 and 04-battle.md §9 are silent or ambiguous. Code: web/src/view/figures/,
+lab: web/labs/units.html + web/src/labs/units/.
+
+### Body proportions: hip, shoulder and neck heights
+**Decision:** read the part table as the pelvis 0.2 above the ground, the shoulder joints 0.232 and the base of the head 0.25 above the pelvis (part units, × FIG 1.32 = tiles). A standing man is then ≈ 0.57 part units ≈ 0.75 tiles to the top of the head: 10–12 art px tall at zoom 16–19 and 22 px at zoom 34.
+**Why:** with everything measured from the ground the torso (h 0.19) would not fit under the shoulders; measured from the pelvis, arms of 0.11 + 0.118 hang to the hip as they should. The result matches the spec's "9–12 art px at the default zoom" and the reference muster screenshot (int-1-muster, px = 2: 11 art px at zoom 16). It is taller than the spec's "≈ 0.55 tiles" and "19 px at zoom 34"; the zoom-34 reference (d89) shows 27 px, so the spec's two statements already disagree and the default-zoom one was kept.
+**Rejected:** scaling the parts down to hit 0.55 tiles (would change FIG or the part table, both spec constants).
+**Spec:** 02-look.md §5 "Scale".
+
+### One paint attribute: shade or fixed colour per vertex
+**Decision:** every part carries a vec4 `color` attribute: rgb, and alpha = how much the instance dye applies. `shade(k)` = (k, k, k, 1) multiplies the dye; a fixed hex = (r, g, b, 0) ignores it. One merged part may mix both (the torso's leather belt and pouch, the saddle on the dyed saddle cloth, the cape's gold clasps).
+**Why:** the spec's "shade(k) or a fixed hex drawn with a white instance colour" otherwise forces a part to be all-dyed or all-fixed, which would split torso, cape and saddle into extra meshes.
+**Rejected:** separate meshes for belts, clasps and saddles (more draw calls for 2–3 triangles each).
+**Spec:** 02-look.md §5 "Colour".
+
+### Helmets, hoods and caps are dyed parts
+**Decision:** headgear is dyed (instance colour = steel #a3abb3, the captain's gold #e8c34a, the hood's team [1], the cap's smock). Belt and pouch leather is the saddle's #5a3a22; every soldier's hose is the shield kind's #4e4a46 except the captain's (team [0]).
+**Why:** one kettle-hat mesh serves steel and gold. The spec names the hose and belt colours only for some kinds.
+**Rejected:** a gold and a steel copy of every helmet.
+**Spec:** 02-look.md §4 "Men", §5 "Kinds".
+
+### Thin things swell in the vertex shader, to at least 1.2 art px
+**Decision:** thin parts (spear, lance, pitchfork, sword, bow, string, reins, arrow, banner pole, crossbar, chevrons) store each vertex's centreline point (`aAxis`) and swell about it by a per-instance factor `max(1, 0.6 px / zoom / (radius × tiles per unit))`. In the shadow pass they swell to at least one shadow-map texel of radius (`FigureFrame.shadowTexel`).
+**Why:** "never under 1 art pixel across". A 6-sided rod's narrowest silhouette is cos 30° of its diameter, so 1.2 px keeps it ≥ 1.04 px and gap-free at every angle. Scaling the instance matrix instead would bend the bow's arc and lengthen crossguards. Without the shadow-pass swell, spears and banner poles cast dashed shadows; a stroke narrower than about two shadow texels breaks up when sampled.
+**Rejected:** per-zoom geometry; a fixed 1-pixel line pass.
+**Spec:** 02-look.md §5 "Minimum thickness and detail", §9.
+
+### Exact clip: figures land on the art-pixel grid to the sub-pixel
+**Decision:** instance matrices are relative to the figure's snapped root; the root's world position is a per-instance `aRoot`. The vertex shader puts the clip position at the root's whole pixel plus the relative offset rounded to 1/256 px, minus the camera's whole-pixel origin (`FigureFrame.screen`). Light, depth and shadows use root + relative as usual. The hemisphere light's weight is rounded to 1/1024.
+**Why (measured, units lab, both teams, 60 steps of 0.1 px):** with three's own projection the camera drift left 1–9 flipped pixels in 2–6 frames at zooms 7, 9, 19, 23, 28 and 34 (thin edges whose vertices sat on a pixel boundary). With the exact clip: 0 at all 9 zooms, for camera drift and for figure drift. A pose now draws the same picture wherever the figure stands, a whole pixel over. This is the same idea as the land's exact clip (out/decisions-land.md), done root-relative so that moving figures are exact too.
+**Also:** the window position is (pixel − origin) + half the target, and that half ends in .5 when the target's width or height (aw + 2, ah + 2) is odd. Then every whole-pixel point fell exactly on a pixel centre. A 1:1 far gonfalon put a texel edge on every sample, so 500–900 px of banner flickered per step at zooms ≤ 18. Men's vertices sat on the rasterizer's rounding boundaries, giving 3–7 stray px at zoom 34. The clip now subtracts that half pixel and adds 1/1024 px, so every vertex sits strictly inside a 1/256 cell for any target size and either GPU rounding mode. The first measurement hid this because the lab windows happened to be even-sized. Re-measured at 701×431, 700×430, 701×430 and 674×414: 0 bad frames at all 9 zooms (camera and figure drift, right and up, banners on).
+**Rejected:** rounding world-space screen positions only (exact for camera pans, but a moving figure's float error still flips vertices near a 1/512 boundary); three's projection (the flips above).
+**Spec:** 02-look.md §2 "Figures are snapped too", §9 "Never shimmer".
+
+### Figures cast shadows but do not receive them
+**Decision:** `Figures` parts cast shadows; `receiveShadow` is off by default (an option).
+**Why:** a moving figure crosses a fixed shadow map, and self-shadowing would add speckle that changes with every whole-pixel step.
+**Rejected:** receiving by default.
+**Spec:** 02-look.md §1 (shadows), §9.
+
+### Facing and stances
+**Decision:**
+- Facing: the sim's facing; when the man moves at 0.35 tiles/s or less and an aim is given, the aim. Turning is capped at 7 rad/s; a `Rig` may set its own rate (beasts 2.2).
+- "hip −0.3" and "hip −0.5, turn −0.8" are the pelvis's and the torso's yaw from the facing, in radians. The archer's head turns 75% of the way back to the target.
+- Feet: the spear stance puts the left foot 0.24 forward and the right 0.14 back; the archer's stance is 0.22 / −0.2 apart.
+- Stances apply while `engaged` (the company fights).
+**Why:** the sim already reports its direction of motion as its facing. The archer must look along his arrow.
+**Spec:** 02-look.md §5 "Stances", 04-battle.md §9 "Facing".
+
+### Weapons in hand
+**Decision:**
+- **Spear, pitchfork and couched lance:** carried upright at the right hand, the spear's butt 0.015 above the ground. When engaged they are levelled along the facing, 0.1 rad down. The grip is at the right hip and the left hand 0.16 further along the shaft, both hands by two-bone IK. A thrust moves the grip 0.15 × v along the shaft and the body lunges 0.06 × max(0, v). The lance uses the spear thrust table.
+- **Sword:** carried low when not engaged (with half the walk swing on the shoulder), on guard when engaged, the blow table on each strike. The mounted captain keeps the guard. The blade angle is measured from the forearm's perpendicular: blade 0 points forward when the arm hangs.
+- **Shield:** strapped on the left forearm, facing 0.95 rad to the left-front, or 0.25 (square to the foe) when engaged with the arm raised (0.75, 0.95). The iron boss is on the back as the grip, so it never covers the device.
+- **Bow:** hangs from the left hand when not engaged. When shooting, the bow faces the aim, which is lifted 0.22 rad. Each strike looses: the string hand flies back for 0.1 s, returns to nock by 0.45 s, draws to the cheek by 0.9 s and holds. The string runs tip → hand → tip and the arrow shows while drawing.
+**Why:** the spec gives the tables and families but not the carry, the grip or the draw cycle. The strike lean (sin pulse × 0.18) is for melee blows only, since an archer does not lunge.
+**Spec:** 02-look.md §5 "Strike", "Blows", "Stances"; 04-battle.md §9 "Strikes".
+
+### Death
+**Decision:** the man rolls about his facing axis toward a side chosen by hash32(id). The root is lifted 0.1 part units (0.085 for a horse and rider) so the body rests on the ground rather than in it. The arms are abducted 1.25 rad and the head bowed. A horse rolls with its rider. The dead keep helmet and shield and drop held weapons; a corpse's cape and tail hang without wind.
+**Why:** "roll fall·π/2·side·0.92" names the roll. Dropping spears keeps a field of corpses from bristling with poles.
+**Spec:** 02-look.md §5 "Death".
+
+### Rank marks accumulate, and the kinds' looks by rank
+**Decision:**
+- Rank 2 wears both the team [3] plume and the team [1] cape; rank 3 wears the gold plume and the cape.
+- Folk carry no marks. The captain always has his red plume and a team [1] cape.
+- **Levy (the freed):** rank 0 is bare-headed in the man's own village smock (SMOCKS by hash); rank 1 adds a soft cap in the smock colour; rank 2 and up is dyed team [2] with a steel nasal helm. A recruit looks rank 0 whatever his rank.
+- The levy's banner is linen until rank 2.
+**Why:** the rank table lists one mark per rank; a rank-3 man losing the cape he had at rank 2 would read as a demotion.
+**Spec:** 02-look.md §5 "Kinds", "Rank marks".
+
+### Folk, the captain and the horse kind
+**Decision:**
+- **Folk:** a child when hash32(id, 11) % 4 = 0 (×0.72); a woman when hash32(id, 12) is even (gown to the ankle, kerchief in linen #d2c29c); half the men wear a soft cap. The bundle is linen #a8946c tied with #6b5a40.
+- **The captain** is always mounted on the general's charger at ×1.08, with a sword (04-battle.md §5 "The captain's ride").
+- **The horse kind:** a rider in a kettle hat with a lance and a team [2] pennant; coat by hash32(id); one rein from the left hand to the muzzle.
+- Beards: types 0–4 by id % 7, none for 5 and 6, and none for women and children.
+**Spec:** 02-look.md §4 "Men", §5 "Kinds", "Horse".
+
+### Horse legs
+**Decision:** knee and hock both fold the lower leg backward. The gallop rise and head nod apply only while moving; a standing horse is still.
+**Spec:** 02-look.md §5 "Horse gait".
+
+### Cloth details
+**Decision:**
+- The hanging bend's `gust` is `0.5 + 0.5·sin(0.83t + 0.37·phase)`, and its `z` is the vertex's lateral coordinate in part units.
+- A flag's normals follow its wave at 30% only, so the device stays flat-lit.
+- The per-instance `aCloth` of the spec is the first three components of `aExtra` (wind, phase, length).
+**Why:** with full normals the toon ramp striped every banner in light and dark bands.
+**Note:** the spec's formulas move cloth even at zero wind. A standing man is still, but capes, tails and pennants sway slightly at rest. Measured with the clock running and nobody moving, at most 4 px change per frame at zoom 16 and 10 px at zoom 34 (rank 0), and up to 30 px with every man caped. Banners wave every frame.
+**Spec:** 02-look.md §5 "Cloth".
+
+### Banner cloth: size, a far gonfalon, and square to the camera
+**Decision:**
+- The cloth is 2/3 tile wide (the 16:26 gonfalon is then 1.08 tall) on the spec's 1.6 / 1.95 pole.
+- The card is turned square to the camera: tilted by the 30° pitch, its foot toward the viewer, pushed 0.06 out from the pole.
+- When the 16×26 texture would be minified (zoom × grow × 2/3 < 16 px, i.e. zooms 7–23), a far 12×20 gonfalon is drawn instead. Its layout: a 5×6 fleur at (3, 3), 3–5 px kind marks centred at row 12, a 4-row swallowtail, 2 dark columns. At zoom 18 and below it lands exactly one texel per art pixel, because the banner then grows to 18 px per tile.
+**Why:** nearest-neighbour minification of the 16×26 fleur dropped columns and turned it into a "$" at zoom 16. Facing the camera removes the cos 30° vertical squash. The reference screenshots show banners square to the viewer, about as wide as a man is tall.
+**Rejected:** a 16-px-wide cloth at 18 px per tile (0.89 × 1.44 tiles, hanging almost to the ground on a 1.6 pole); mipmaps (blend colours, not pixel art).
+**Spec:** 02-look.md §6.
+
+### Gonfalon layout
+**Decision:**
+- The fold row is row 1 (row 2 on the captain's, under its gold ring).
+- Columns 12–14 are ramp[1], inside the ramp[0] outline.
+- The swallowtail is a V cut across the bottom 5 rows.
+- The kind mark is centred on column 7 at row 15. The marks (ASCII in atlas.ts) are: spear a leaf blade, shield a heater, bow an arc with an arrow, horseshoe, and crown.
+**Spec:** 02-look.md §6 "The banner texture".
+
+### Chevrons and honour ribbons are geometry
+**Decision:**
+- Rank chevrons are gold ^ strokes stacked above the crossbar (0.14 apart, up to 3), in the cloth's plane.
+- Honour ribbons (up to 6, cream and red in turn) hang 0.32 from the crossbar's ends, outside the cloth, alternating left and right; the crossbar is 0.9 wide.
+**Why:** the reference shows rank chevrons as a gold peak over the crossbar, and the 16×26 texture has no free rows for them once the emblem and mark are placed.
+**Spec:** 02-look.md §5 "Rank marks", §6.
+
+### Tatter stages
+**Decision:** stage 0 pristine; 1 the tail is eaten (2–3 rows, ragged); 2 adds the fly torn (a ragged bite out of the right edge); 3 adds two or three holes beside the device (never within a pixel of it) and the grime. Holes and tears have 4 variants per look, picked by hash32 of the squad id.
+**Spec:** 02-look.md §6.
+
+### Banner lean and shake
+**Decision:** lean = clamp((0.55 − heart)/0.3, 0, 1) × 0.42 rad, in the screen plane, away from where the company faces on screen. Below heart 0.3 a shake of sin(23t)·0.08 rad is added.
+**Why:** the spec's lean is unbounded (1.8 at heart 0), so it reads as a factor. "Near breaking" needs a number; companies break at morale 22 (04-battle.md §5).
+**Spec:** 02-look.md §6 "Pole and behaviour".
+
+### Beasts: an extension point
+**Decision:** men and horses are built in. Any other body registers a `Rig` (`registerRig('beast', { pose, stride, turn })`), which gets the shared part pool and the per-man state. Until a rig exists, beasts are skipped with a single console warning.
+**Spec:** 02-look.md §5, 04-battle.md §9.
+
+### Units lab specifics
+**Decision:**
+- The lab's focus is a little off the art lattice, at (32.0137, 31.9781).
+- It faces everyone west (π) by default, toward the viewer's lower left as in the references.
+- Its plain ground looks shadows up at the exact point of each pixel's ray, as the game's land does.
+- `flicker()` freezes the clock unless asked.
+- For figure drift, it predicts the frame as the previous frame's figure pixels (those differing from a render of the empty field) moved by the figures' own whole-pixel step over the current empty field; any other pixel counts.
+**Why:** a focus exactly on the lattice puts every figure on a .5 tie at the same step, and float noise then rounds neighbours differently. That is a lab artefact which game positions never hit.
+**Spec:** 02-look.md §10.
+
+### Triangle budget and posing cost
+**Decision:** about 1,350 triangles per man on foot and 2,800 per rider and horse (ball segment counts trimmed to what reads at 6–22 px). Posing allocates nothing per man.
+**Why (measured, 500 men, 1/6 of them riders, all marching, M5 Pro):** 860 k triangles (the original's heavy battle hit its limit at 1.5 M); `Figures.update` takes 5.7 ms p50 and 7.3 ms p90. When they stand still nothing is uploaded, but posing still takes 4.9 ms. Before the trim: 1.0 M triangles and 8.5 ms.
+**Next levers:** cache the matrices of men whose inputs did not change; fewer segments below zoom 16; drop face, hand and toe detail far away.
+**Spec:** 02-look.md §8 "Known limit".
