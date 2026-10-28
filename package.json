@@ -9,7 +9,8 @@
     "typecheck": "tsc -p web && tsc -p web/tsconfig.node.json && tsc -p tools",
     "test": "cargo test && npm run test:wasm",
     "test:wasm": "wasm-pack test --node crates/sim-wasm",
-    "voice-eval": "node --disable-warning=ExperimentalWarning tools/voice-eval/main.ts"
+    "voice-eval": "node --disable-warning=ExperimentalWarning tools/voice-eval/main.ts",
+    "say": "node --disable-warning=ExperimentalWarning tools/say/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

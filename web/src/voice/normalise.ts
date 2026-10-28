@@ -1,6 +1,7 @@
 // Normalising the words and matching names (docs/spec/06-voice.md §5). Pure.
 
-const FILLERS = new Set(['uh', 'um', 'er', 'okay', 'ok', 'now', 'please']);
+// "now" is not a filler: it is the captain's signal (08-orders §3, §6).
+const FILLERS = new Set(['uh', 'um', 'er', 'erm', 'okay', 'ok', 'please']);
 const NUMBERS: Record<string, string> = {
   one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
 };

@@ -1429,3 +1429,250 @@ The contract (`crates/sim/src/contracts.rs`) is unchanged.
 
 ### Dawn
 **Decision:** `Battle.dawn` is set when the night ends; on today's keep and town maps that is the tick the battle is decided, so `When::Dawn` only matters once a battle can outlast its night (day 4's relief). The check sets the flag directly.
+
+## D-17 | 2026-10-28 | Day 4: the order language in voice (08-orders §9)
+**Summary:**
+- **The reply:** a bare JSON array of up to 4 orders, `{"who":[…],"do":VERB}` plus only the fields that were said: `work, as, to, rel, and, from, round, by, stance, shape, pace, fight, when`. Every value is a per-battle enum under a whitespace-free grammar.
+- **Resolution** turns selectors, enemy-by-kind targets and relative points into the contract's deeds. Modifiers become `with`, and sequences, signals and conditions become `wait`; waits go after the direct deeds in each batch (D-16).
+- **The fast path** grows: signals, hold fire, fire at will, and per-company halt.
+- **`npm run say`** runs any sentence (cached, `--live` or `--offline`).
+- **The eval:** a 146-case suite in 11 categories (`docs/voice-eval/cases-08.json` with `fixture-08.json`).
+- Built by a delegated agent; checked again before commit.
+**Measured:**
+- **The 08 suite:**
+  - The agent, 146 × 3 live: 99.3%.
+  - My cached re-judge: 145/146.
+  - My live re-run after the name fix below: 145/146, brain p50 1.9 s and p95 2.9 s. 10 categories at 100%; conditions 92% (case 141, an ambiguous "when they reach the ford, charge").
+- **The Day 1 suite:** 20/20, brain p50 1.64 s (D-07: 2.76 s). Replies average 17–19 tokens, against 32 before.
+- **Held-out check (mine):** 10 new sentences, never seen by the agent or the prompt.
+  - 7 fully right, including "take their place", "if Oda breaks, Hakon fills the gap", "wait till the trolls reach the ford" and "look after Ella".
+  - "Nobody moves until I say so" became hold-fire on my mark instead of an army hold.
+  - "Get your bows up" pulled in BORS: the fuzzy matcher heard "bows" as BORS. **Fixed:** kind words and army words are never names. The sentence now resolves correctly.
+  - So on new phrasing, expect about 80–90%, not the suite's 99%.
+**Open:**
+- Keep a held-out set for measurement only, never for prompt tuning.
+- The game must store groups and waiting orders in the field it gives voice (day 4's wiring).
+- Sequences across companies need a new `When`.
+- "Bors, now" releases every signal-0 wait, not only Bors's.
+- The prefix is now about 3,970 cached tokens (15–20 s to read once per server start).
+- Warming the field at hold start is still required.
+
+# Decisions: the order language on the voice side (08-orders §9)
+
+Choices made where `docs/spec/08-orders.md` and `06-voice.md` are silent, while building the voice side of the order
+language: the reply schema, the field description, the prompt, resolution, the fast path, `say` and the 08 eval.
+Code: `web/src/voice/{field,orders,resolve,prompt,brain,normalise,pipeline}.ts`, `tools/say/main.ts`,
+`tools/voice-eval/main.ts`, `tools/voice-cache.ts`. Data: `docs/voice-eval/{fixture-08,cases-08}.json`.
+
+### The reply is a bare array of orders with optional fields in a fixed order
+**Decision:** the model replies with a JSON array of at most 4 orders, `[]` meaning unclear. Each order is
+`{"who":[…],"do":VERB}` plus only the fields the words ask for, in this order: `work`, `as`, `to`, `rel`, `and`,
+`from`, `round`, `by`, `stance`, `shape`, `pace`, `fight`, `when`. Every name is a per-battle enum (`enums(field)`),
+and the GBNF grammar has no whitespace and makes each field optional in that order. A plain order is
+`{"who":["BORS"],"do":"take","to":"MILL"}`; a full one
+`{"who":["BORS"],"do":"charge","to":"TROLLS","shape":"wedge","when":"mark"}`.
+- `when` is one string: `done`, `mark`, `attacked`, `night`, `dawn`, `after:N`, `near:<spot>`, `breaks:<company or foe>`.
+  The compound values are enums too (`after:` takes 1–3 digits), so a condition is one field, not two.
+- `work` and `as` come straight after `do`: on the first run the model wrote `"do":"build","work":…` and, with `to`
+  ordered before `work`, could no longer say where (2 failures). Verb, then object, then place is how it writes.
+**Why:** the brain writes every token at ~13 tok/s here, so tokens are latency. Day 1's object form wrote 32 tokens
+p50 for one order (`side`, `fight` and `unclear` always present); this form writes 17 for the same Day 1 cases, and
+Day 1 brain p50 fell from 2.76 s to 2.1 s at 20/20.
+**Rejected:** keeping Day 1's object with required fields (every order pays for fields nobody said); one-letter keys
+(`who`, `do`, `to` are already one token each, and names the model understands help accuracy); a non-JSON line format
+(fewer tokens, but the spec asks for a JSON schema and the model writes JSON best); a separate `on` field for
+conditions (one more key per conditional order).
+**Spec:** 08-orders §9 "the schema grows"; 06-voice §4c.
+
+### Selectors are enums resolved in code; the field shows each company's place and state
+**Decision:** `who` takes company names, kinds (HORSE, SPEAR, SHIELD, ARCHER, LEVY), ARMY, OTHERS, named groups,
+`LEFT_WING`, `RIGHT_WING`, `CENTRE`, `FRONT_LINE`, `REAR`, `RESERVE`, `FREE`, `FRESH`, `SHAKEN`, `WOUNDED` and
+`NEAR_<spot>`. The code resolves them (`resolve.ts` `select`):
+- **The line** is the companies not detached, not in reserve and not routing; the army's frame is centred on it
+  (Day 1 centred it on every company; the Day 1 field has none detached, so nothing there moves).
+- **Wings:** at least 2.5 tiles across from the line's centre and within 2 of the outermost company. **Front line:**
+  within 1.5 tiles of the foremost company's depth. **Rear:** 3 or more tiles behind it. **Centre:** the rest.
+  **Reserve:** the reserve flag.
+- **FREE:** idle, and not in reserve or detached. **FRESH:** 90% of its men, morale ≥ 0.8, not fighting (the reserve
+  counts). **SHAKEN:** routing or morale < 0.5. **WOUNDED:** under 60% of its men.
+- **NEAR_X:** the company nearest X, plus any other within 4 tiles of it ("the company nearest the ford" and "the ones
+  by the mill" both resolve sensibly without the model counting).
+- The state text adds the same tags to each company (`fighting front centre wounded`, `reserve`, `detached`,
+  `shaken`), and `shaken` to foes, about 3 tokens a company, so the model and the code see the same thing.
+**Why:** the model cannot measure; code can. With the tags shown the model may also answer with names, which resolve
+to the same companies, so the eval judges resolved companies, not selector tokens.
+**Rejected:** letting the model pick companies from the tags alone (it would have to compare coordinates); showing
+morale as a number (more tokens; `shaken` is the threshold the selectors use).
+**Spec:** 08-orders §2.
+
+### Named groups live on the voice side; the model may only name one with a word that was said
+**Decision:** "Bors and Ren, you're the hammer" resolves to a group `{name: HAMMER, members}` returned by `resolve`
+(`Resolution.groups`), with no deed. The caller keeps it in `Field.groups`; it then appears in the state text
+(`GROUPS: HAMMER = BORS HAKON`) and in the `who` and target enums. The `as` field's enum is the words of this
+utterance (3+ letters), built into the grammar per call, so the model never invents a name. A group cannot take a name
+already in use (a company, kind, selector, spot or foe kind).
+**Why:** the spec says every name is an enum; a group name is the one name the captain coins, so the utterance is its
+enum. The grammar is not part of the cached prompt, so a per-call grammar costs nothing.
+**Rejected:** a fixed list of group names (HAMMER, ANVIL…), which a player would have to learn; letting code alone
+parse "you're the X" (brittle across phrasings).
+**Spec:** 08-orders §2 "a named group".
+
+### Signals: 0 for everyone, a group's own number for its orders
+**Decision:** a waiting order on `mark` waits for signal `n` = the group's number (its index + 1) when it is
+addressed to exactly one named group, else 0. `Field.waiting` lists the waiting orders with their `n`. "now", "go",
+"loose", "go go go", "fire" and, while anything waits, "charge" raise every `n` that is waiting (one Signal deed
+each); "hammer, go" or "Ren, now" raise only the signals of that group's or company's waiting orders. A signal with
+nothing waiting is refused. "now" is no longer a filler word (it was in 06-voice §5's list) since it is the signal.
+"attack" alone is not a signal: it stays ARMY attack the nearest foe.
+**Why:** "hammer, go" (08-orders §2) must release only the hammer; the contract's `Signal{n}` releases every order on
+`n`, so groups need their own numbers. Plain "now" releasing everything is what a captain means.
+**Rejected:** one signal per company (a "now!" would need many deeds, and groups are how the spec names a
+manoeuvre); signal 0 for everything (then "hammer, go" releases everyone).
+**Spec:** 08-orders §3 "signal", §6 "signals".
+
+### Enemy kinds and picks resolve to the nearest squad, with the priority in `with`
+**Decision:** a target of BLIGHTMEN, TROLLS, DRAKES or BROODLORD is the nearest seen squad of that unit to each
+company (so the army's archers may pick different packs), and the deed is wrapped in
+`with {priority: {by: 'unit', unit}}` (7, 8, 9, 10). NEAREST, WEAKEST and STRONGEST likewise add
+`{by: 'nearest' | 'weakest' | 'strongest'}`; WEAKEST and STRONGEST use `FieldFoe.strength` (men × worth, as the sim's
+priority scores), else men. MOST_SHAKEN is the foe with the lowest morale and adds no priority (the TS contract has no
+"shaken" priority). An explicit enemy id ("the ones attacking the mill" → the id whose state says so) adds none.
+**Why:** `Attack` needs one squad now, while "get their drakes" means "and the next drakes after": the priority makes
+the sim keep choosing that kind once the first pack is gone.
+**Spec:** 08-orders §4, §5 "priority".
+
+### Relative points and the army's own sides
+**Decision:** (`relPoint`, `framePoint`), each `ext + 2` tiles from the target, where ext is a hill's radius, half a
+wood's larger side, 1.5 for a place, company or foe, and 1 for a work:
+- **behind** a feature: on our side of it, away from the enemy; behind a foe: its far side from us. **in front of**
+  is the opposite. A river's behind is our bank, its front the far bank.
+- **across** a river: the far bank, 2.5 tiles out, level with the ford nearest the company; across anything else: its
+  far side.
+- **beside** a company or spot: on the side the ordered company comes from. **left/right** of: along the army's left.
+- **between** A and B: the midpoint. Without the second place it is refused.
+- **LEFT_FLANK / RIGHT_FLANK:** 3 tiles beyond the outermost company of the line on that side; **FRONT / REAR:** 3
+  tiles beyond the foremost / hindmost. For `face` they give the direction itself.
+- **Routes:** `round` keeps 06-voice §6 (6 tiles out from the midpoint); `by` adds a via at the feature's point nearest
+  the midpoint.
+**Why:** "behind the ridge" in a battle means the reverse slope (sheltered from the enemy), and "get behind the
+trolls" means their rear; one rule for features and the opposite for foes covers both.
+**Open:** "stakes in front of the ford" puts them on the far bank (forward of the ford); a river crossing may want
+"in front" clamped to our bank.
+**Spec:** 08-orders §4 "relative points".
+
+### Modifiers and triggers wrap the deed as `wait(with(deed))`
+**Decision:** stance, shape, pace and the target priority become `How` in a `with`; the trigger becomes a `wait`
+outside it. `fire_at_will` is stance `normal`; `chase` / `no_chase` are `pursue: true / false`; `thin` and `deep` are
+`files: 8` and `files: 3` (no shape change). `set` carries its `How` itself (no `with`), and a `set` with an enemy
+target sets only the priority ("archers, focus the drakes"). `near:X` is `enemy_near` at X's point with r = 3;
+`breaks:X` takes a company or a foe (kinds and groups resolve to their nearest member). Several companies given the
+same deed share one deed with `who: {t: 'squads'}`; companies whose points differ keep one deed each.
+**Why:** the contract's nesting; `wait` outermost so the trigger is checked before the modifiers apply.
+**Spec:** 08-orders §5, §6; contracts `With`, `Wait`, `Who::Squads`.
+
+### In one utterance's batch, the waiting deeds go after the direct ones
+**Decision:** `Resolution.deeds`, the batch queued for one utterance, lists every deed that is not a `wait` first and
+the `wait`s after, each group in the reply's order. "Hold the ford once you've taken the mill" gives
+`take`, then `wait done (move)`, even if the model wrote the waiting order first.
+**Why:** in the sim a direct order clears the waits of whoever it orders (the queue of 08-orders §6), so a wait queued
+before a direct order to the same company in the same tick would be lost.
+**Spec:** 08-orders §6 "sequences"; the sim's order queue (D-11 "the order model").
+
+### `when: done` is per company
+**Decision:** "Bors, take the mill, then Wil, hold the ford" gives Wil a `wait done`, which waits for Wil's own current
+order, not Bors's. A sequence across companies is not expressible in the contract's `When`; the model's examples only
+use `done` for the same company.
+**Open:** a `When::Done { squad }` would carry "once the riders are through, the spears go".
+**Spec:** 08-orders §6; contracts `When::Done`.
+
+### Verb details the spec leaves open
+**Decision:**
+- **hold** with no place (or HERE) is `Hold`; with a place it is a move with fight on (Day 1). "wait / stand by" with
+  no order after it is `hold`.
+- **move** to ME is a recall (the army: rally). A move to a village the blight holds is a take (D-07, kept).
+- **attack** with no target is the nearest foe to each company; at a place it takes it; at our own company or the
+  captain it is refused. **charge** with no target is `Charge{who}` (the sim picks); "charge it" when the trigger is
+  `near:X` and the target is X is also `Charge{who}` (whoever arrives is the foe), and the same attack is a move to X
+  ready to fight.
+- **guard / screen** take a company or ME as the ward (the captain is squad `Field.captain.id`, 0 in the sim's
+  setups); a kind or group ward is its nearest member; a place ward becomes a move there ready to fight; a foe ward is
+  refused.
+- **commit** said to no one sends in the companies in reserve (refused if none). **reserve** said to the army is
+  refused ("the army cannot be its own reserve"), as the sim refuses it.
+- **build** said to the army goes to one company, as the sim takes works only from a company: the free company
+  nearest the spot (the captain, for stakes with no place), else the nearest one not fighting. On fixture-08
+  "Build a bridge at the narrows" goes to REN.
+- **advance** with no place is `Advance` when the deployment is held (`Field.held`), else a move 6 tiles toward the
+  threat with fight on.
+- **build:** stakes with no place go 1.5 tiles in front of the company; every work faces the army's forward; a bridge
+  must be on the river, its narrows or a place within 2 tiles of its banks, else refused. "man the tower" is a hold of
+  the work (a move there ready to fight).
+- **recall** said to the army recalls every detached company.
+**Spec:** 08-orders §3, §7, §8.
+
+### Other words for a seen foe kind are normalised in code
+**Decision:** before the brain, "dragon(s)" and "wyrm(s)" become "drakes" and "giant(s)" "trolls", when the field
+has that kind, as spoken company names already become their exact names (`canonicalNames`). The rules still list
+the synonyms.
+**Why:** after the rule "any other kind of foe … is not on the field" was added (it fixed "charge the goblins"),
+Day 1's "Kill the dragon" was answered `[]` in 3 of 3 runs. Doing the 06-voice §4a synonym rule in code made it 3 of
+3 again without giving up the refusal.
+**Rejected:** dropping the refusal rule (the goblins case then names blight-men); more examples (the model weighed
+"dragon" against the new rule, so the mapping belongs in code).
+**Spec:** 06-voice §4a, §5.
+
+### The fast path's new patterns
+**Decision:** before the brain: the signals above; "hold fire / hold your fire / cease fire / stop shooting" and
+"fire at will / loose at will / open fire" for the archers, or for whoever is named first ("Ren, hold your fire");
+"<who> stop / halt / hold / stand / stand fast / hold position" for a company, kind or group ("everyone halt" is the
+army). Who-words there are names (fuzzy), kinds, groups and everyone/all/army. "men", "ten", "fill", "boys", "rest",
+"tell" and similar are never heard as names (REN, WIL, BORS sound like them).
+**Why:** 08-orders §9 lists them; each answers in under 10 ms instead of ~2 s.
+**Spec:** 08-orders §9 "the fast path grows"; 06-voice §5.
+
+### Refusals carry a reason; unclear is an empty reply
+**Decision:** a reply of `[]` is unclear (query horn). A resolved order that cannot be carried out is refused on its
+own with a reason (`Refused.why`): no company matches a selector ("no company is shaken"), the companies cannot take
+orders (routing), a verb lacks its target, an unseen foe kind, attacking our own, a bridge off the river, a company
+acting on itself, a signal with nothing waiting, a group name already in use. The rules tell the model to reply `[]`
+for a foe that is not seen ("charge the goblins").
+**Spec:** 08-orders §1 "a refusal … its reason goes to the log"; 06-voice §6 "validation".
+
+### The Day 1 suite runs on the new format; its state text and schema are kept as records
+**Decision:** `npm run voice-eval` still runs the 20 Day 1 cases on `fixture.json` unchanged, through the new prompt,
+schema and resolver (what ships). The Day 1 check that the builders reproduce `fixture.json`'s `stateText` and
+`schema.json` exactly no longer holds (the state text gains tags, the schema is the new one), so it now checks that
+every Day 1 name is still an enum. `fixture-08.json` carries its own `stateText`, checked exactly on every 08 run.
+Day 1 replies in the old object form (`target`, `side`) are still read by `replyOf` and `resolve`.
+**Rejected:** a second, Day 1-only prompt and schema (it would measure something that no longer ships).
+**Spec:** 06-voice §9; the brief's "the Day 1 suite must still run unchanged".
+
+### The 08 fixture and its eval
+**Decision:** `fixture-08.json` is the Day 1 warband plus ELLA (archers, detached) and HAKON (spears, reserve), two
+companies in a fight (one shaken, both worn), five foes of all four blight units, a group (HAMMER) and two waiting
+orders, a watchtower and the river's narrows. Foe ids are E12–E16, distinct from our squad ids 0–6 (in Day 1's
+fixture E1–E3 share numbers with our companies, which made a `breaks:E3` trigger point at ODA). Cases are judged on
+resolved acts (one per company, or one for the army): every expected act must match a distinct act and there must be
+no others; a `when` that was not asked for fails. `none` cases pass on unclear or on a refusal.
+**Why:** judging after resolution lets the model answer with a selector or with names, as long as the right companies
+get the right deeds.
+**Spec:** 08-orders §9 "the eval grows".
+
+### A reply cache for `say` and the eval
+**Decision:** every live reply is cached in `out/voice-cache.json`, keyed by sha256(mode, temperature, prompt prefix,
+state text, heard words). `say` replays a cached reply when there is one and asks the brain otherwise; `--live` always
+asks, `--offline` never does, `--reply '<json>'` resolves a hand-written reply. The eval's `--cached` re-judges on
+cached replies (for resolution changes, no GPU needed).
+**Why:** 06-voice §7 ("a fixture cache keyed by hash(state text + utterance)"); the prefix is in the key so a prompt
+change can never replay a stale reply.
+**Rejected:** committing the cache under docs/ (it churns with every prompt change; out/ is ignored by git).
+**Spec:** 06-voice §7.
+
+### Checked against the sim's own types
+**Decision:** every deed the 08 suite resolves (151, from the cached replies) was fed to the sim through
+`harness play … do '<deed JSON>'` (the sim's serde types, `sim::text::parse`). All 151 parse. On the harness's own
+ford map the sim carried out 69 and refused the rest only for ids and spots that exist in fixture-08 but not on that
+map (squads 5–6, foes E13–E16, site 0, a bridge where its map has no water); the one shape it refused outright,
+`build` for the army, is now given to a company (above).
+**Spec:** contracts `Deed`; AGENTS.md rule 5 (model output is resolved, validated, then queued).
+

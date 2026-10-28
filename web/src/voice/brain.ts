@@ -5,7 +5,7 @@
 // Uses fetch only, so the same code runs in the browser and in Node.
 
 import { orderGrammar, orderSchema, type Field } from './field.ts';
-import type { Reply } from './orders.ts';
+import { replyOf, type Reply } from './orders.ts';
 import { PREFIX, userTurn } from './prompt.ts';
 
 export type BrainMode = 'prefill' | 'chat';
@@ -31,7 +31,7 @@ export interface BrainResult {
 
 const ANSWER_TURN = ' to=user<|message|>';
 const SENTINEL = '\u0001USER\u0001';
-const MAX_TOKENS = 160;
+const MAX_TOKENS = 200;
 const TEMPLATE_KWARGS = { reasoning_strength: 'low' };
 
 const templates = new Map<string, [string, string]>();
@@ -79,7 +79,8 @@ export async function ask(o: BrainOpts, field: Field, said: string, nonce = ''):
     const [before, after] = await template(o);
     const r = await post(o, '/completion', {
       prompt: before + turn + after + ANSWER_TURN,
-      grammar: orderGrammar(field),
+      // The said words go into the grammar, so a group can only be named by a word the captain spoke.
+      grammar: orderGrammar(field, said),
       n_predict: MAX_TOKENS,
       temperature: o.temperature,
       cache_prompt: true,
@@ -93,7 +94,7 @@ export async function ask(o: BrainOpts, field: Field, said: string, nonce = ''):
         { role: 'system', content: PREFIX },
         { role: 'user', content: turn },
       ],
-      response_format: { type: 'json_schema', json_schema: { name: 'orders', schema: orderSchema(field) } },
+      response_format: { type: 'json_schema', json_schema: { name: 'orders', schema: orderSchema(field, said) } },
       chat_template_kwargs: TEMPLATE_KWARGS,
       temperature: o.temperature,
       max_tokens: 2048,
@@ -103,7 +104,7 @@ export async function ask(o: BrainOpts, field: Field, said: string, nonce = ''):
   }
   const ms = performance.now() - t0;
   return {
-    reply: JSON.parse(raw) as Reply,
+    reply: replyOf(JSON.parse(raw)),
     raw,
     ms,
     promptTokens: timings.prompt_n ?? 0,
