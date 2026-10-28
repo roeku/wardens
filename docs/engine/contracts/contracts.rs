@@ -27,7 +27,76 @@ pub struct P { pub x: f64, pub y: f64 }
 /// a company id means a detached order (the company plants an order flag).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "t", rename_all = "lowercase")]
-pub enum Who { Army, Squad { id: SquadId } }
+pub enum Who {
+    Army,
+    Squad { id: SquadId },
+    /// Several companies at once, each as if ordered alone (08-orders §2).
+    Squads { ids: Vec<SquadId> },
+}
+
+// ---------------------------------------------------------------------------------------------
+// The order language (docs/spec/08-orders.md): modifiers and triggers wrap any deed, so new
+// verbs, ways and timings compose instead of multiplying variants.
+// ---------------------------------------------------------------------------------------------
+
+/// How an order is carried out (08-orders §5). Unset fields keep the company's current way.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct How {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stance: Option<Stance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pace: Option<Pace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<Shape>,
+    /// Files in the front rank: a thin line is many, a deep one few.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<u16>,
+    /// Chase routers (true) or let them go (false).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pursue: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<Priority>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Stance { Normal, Aggressive, Defensive, HoldFire, Skirmish }
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Pace { Walk, Quick, Double }
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Shape { Line, Column, Wedge, Square, ShieldWall, Loose, Tight }
+
+/// Which enemy a company goes for first (08-orders §4–§5). `unit` is `sim::units::Unit::id()`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "by", rename_all = "snake_case")]
+pub enum Priority { Nearest, Unit { unit: u8 }, Weakest, Strongest, Commander, Attacking { squad: SquadId } }
+
+/// When a waiting order runs (08-orders §6). Triggers read only sim state; signals arrive as Commands.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "on", rename_all = "snake_case")]
+pub enum When {
+    /// After the company's current order completes ("…, then …").
+    Done,
+    /// On the captain's signal ("wait for my mark" … "now!"); 0 is the plain "now" / "go".
+    Signal { n: u8 },
+    After { s: f64 },
+    /// Any enemy within `r` tiles of `at` ("when they reach the ford").
+    EnemyNear { at: P, r: f64 },
+    /// That company routs ("if the shields break").
+    Breaks { squad: SquadId },
+    CaptainAttacked,
+    Nightfall,
+    Dawn,
+}
+
+/// A field work (08-orders §7).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Work { Stakes, Barricade, Bridge, Watchtower }
 
 /// The only way anything changes a battle. Taps, drags, voice, bots and the LLM broodlord all produce these.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -43,6 +112,35 @@ pub enum Deed {
     Recall { id: SquadId },
     /// Tap on the captain: everyone recalled, the army halts.
     Rally,
+    // The order language (08-orders §3, §5, §6).
+    /// `deed` carried out with modifiers; the route stays in the deed's own `via`.
+    With { how: How, deed: Box<Deed> },
+    /// `deed` held until `until` fires; a waiting order shows as a faint mark.
+    Wait { until: When, deed: Box<Deed> },
+    /// The captain's signal: releases every waiting order on signal `n`.
+    Signal { n: u8 },
+    /// Change how companies fight or stand without a new order.
+    Set { who: Who, how: How },
+    /// Stay by `ward` (a company, or the captain's squad) and defend it: escort, guard, "follow me".
+    Guard { who: Who, ward: SquadId },
+    /// Stand between `ward` and the nearest threat, or `from` ("shields, cover the archers").
+    Screen { who: Who, ward: SquadId, #[serde(default)] from: Option<SquadId> },
+    /// Attack now, ignoring the cohesion gate.
+    Charge { who: Who, #[serde(default)] target: Option<SquadId> },
+    /// Fall back fighting: keep facing the enemy and step back to `to`, or out of contact.
+    Withdraw { who: Who, #[serde(default)] to: Option<P> },
+    /// Fall back behind the line to recover morale.
+    Regroup { who: Who },
+    /// Hold a company back out of the line as the reserve.
+    Reserve { who: Who },
+    /// Send the reserve in, at `target` if given.
+    Commit { who: Who, #[serde(default)] target: Option<SquadId> },
+    /// Turn toward `face` (radians, atan2(dy, dx) in sim coordinates).
+    Face { who: Who, face: f64 },
+    /// End the held deployment: the armies may advance (08-orders §8).
+    Advance,
+    /// Build a field work at `at`, facing `face` (08-orders §7).
+    Build { who: Who, work: Work, at: P, #[serde(default)] face: f64 },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

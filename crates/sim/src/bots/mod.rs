@@ -176,7 +176,7 @@ impl Orders {
 fn same(b: &Battle, deed: &Deed) -> bool {
     let squad = |who: &Who| match who {
         Who::Squad { id } => b.squads.get(*id as usize),
-        Who::Army => None,
+        Who::Army | Who::Squads { .. } => None,
     };
     const NEAR: f64 = 1.0;
     match deed {

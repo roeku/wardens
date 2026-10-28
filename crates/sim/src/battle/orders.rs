@@ -84,6 +84,8 @@ impl Battle {
                     self.recall(i);
                 }
             }
+            // The order language (08-orders) is carried out from day 4; until then its deeds are refused, not ignored.
+            _ => return Err((self.captain_at(team).unwrap_or(self.map.deploy[team as usize & 1]), "not carried out yet (08-orders)".into())),
         }
         Ok(())
     }
@@ -130,6 +132,7 @@ impl Battle {
                 let i = self.own(team, *id)?;
                 Ok(if self.squads[i].kind == Kind::Captain { Whom::Army(i) } else { Whom::One(i) })
             }
+            Who::Squads { .. } => Err((self.captain_at(team).unwrap_or(self.map.deploy[team as usize & 1]), "several companies at once: not carried out yet (08-orders)".into())),
         }
     }
 

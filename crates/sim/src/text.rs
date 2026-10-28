@@ -33,7 +33,7 @@ pub fn parse(b: &Battle, team: Team, text: &str) -> Result<Deed, String> {
         "hold" => Deed::Hold { who: args.first().map_or(Ok(Who::Army), |w| who(b, team, w))? },
         "recall" => match who(b, team, arg(0)?)? {
             Who::Squad { id } => Deed::Recall { id },
-            Who::Army => return Err("recall: name a company".into()),
+            Who::Army | Who::Squads { .. } => return Err("recall: name a company".into()),
         },
         "rally" => Deed::Rally,
         other => return Err(format!("unknown command: {other}")),
@@ -45,6 +45,7 @@ pub fn format(deed: &Deed) -> String {
     let who = |w: &Who| match w {
         Who::Army => "army".to_string(),
         Who::Squad { id } => id.to_string(),
+        Who::Squads { ids } => ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("+"),
     };
     let fight = |f: bool| if f { " fight" } else { "" };
     match deed {
@@ -59,6 +60,8 @@ pub fn format(deed: &Deed) -> String {
         Deed::Hold { who: w } => format!("hold {}", who(w)),
         Deed::Recall { id } => format!("recall {id}"),
         Deed::Rally => "rally".into(),
+        // The order language (08-orders) has no text form yet: show the deed as JSON.
+        other => serde_json::to_string(other).unwrap_or_default(),
     }
 }
 

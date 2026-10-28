@@ -13,7 +13,45 @@ export type Unit = 'spear' | 'shield' | 'archer' | 'horse' | 'levy' | 'folk' | '
 export type Way = 'stubborn' | 'reckless' | 'steady' | 'veteran';
 export interface P { x: number; y: number }
 
-export type Who = { t: 'army' } | { t: 'squad'; id: number };
+/** Who an order is for. `squads` is several companies at once, each as if ordered alone (08-orders §2). */
+export type Who = { t: 'army' } | { t: 'squad'; id: number } | { t: 'squads'; ids: number[] };
+
+// The order language (docs/spec/08-orders.md): modifiers and triggers wrap any deed.
+
+export type Stance = 'normal' | 'aggressive' | 'defensive' | 'hold_fire' | 'skirmish';
+export type Pace = 'walk' | 'quick' | 'double';
+export type Shape = 'line' | 'column' | 'wedge' | 'square' | 'shield_wall' | 'loose' | 'tight';
+/** Which enemy a company goes for first (08-orders §4–§5). `unit` is the sim's `Unit::id()`. */
+export type Priority =
+  | { by: 'nearest' }
+  | { by: 'unit'; unit: number }
+  | { by: 'weakest' }
+  | { by: 'strongest' }
+  | { by: 'commander' }
+  | { by: 'attacking'; squad: number };
+/** How an order is carried out (08-orders §5). Unset fields keep the company's current way. */
+export interface How {
+  stance?: Stance;
+  pace?: Pace;
+  shape?: Shape;
+  /** Files in the front rank: a thin line is many, a deep one few. */
+  files?: number;
+  /** Chase routers (true) or let them go (false). */
+  pursue?: boolean;
+  priority?: Priority;
+}
+/** When a waiting order runs (08-orders §6). Signal 0 is the plain "now" / "go". */
+export type When =
+  | { on: 'done' }
+  | { on: 'signal'; n: number }
+  | { on: 'after'; s: number }
+  | { on: 'enemy_near'; at: P; r: number }
+  | { on: 'breaks'; squad: number }
+  | { on: 'captain_attacked' }
+  | { on: 'nightfall' }
+  | { on: 'dawn' };
+/** A field work (08-orders §7). */
+export type Work = 'stakes' | 'barricade' | 'bridge' | 'watchtower';
 
 export type Deed =
   | { do: 'move'; who: Who; to: P; via?: P[]; fight?: boolean; face?: number }
@@ -22,7 +60,22 @@ export type Deed =
   | { do: 'front'; line: P[] }
   | { do: 'hold'; who: Who }
   | { do: 'recall'; id: number }
-  | { do: 'rally' };
+  | { do: 'rally' }
+  // The order language (08-orders §3, §5, §6).
+  | { do: 'with'; how: How; deed: Deed }
+  | { do: 'wait'; until: When; deed: Deed }
+  | { do: 'signal'; n: number }
+  | { do: 'set'; who: Who; how: How }
+  | { do: 'guard'; who: Who; ward: number }
+  | { do: 'screen'; who: Who; ward: number; from?: number }
+  | { do: 'charge'; who: Who; target?: number }
+  | { do: 'withdraw'; who: Who; to?: P }
+  | { do: 'regroup'; who: Who }
+  | { do: 'reserve'; who: Who }
+  | { do: 'commit'; who: Who; target?: number }
+  | { do: 'face'; who: Who; face: number }
+  | { do: 'advance' }
+  | { do: 'build'; who: Who; work: Work; at: P; face?: number };
 
 export type Source = 'tap' | 'drag' | 'line' | 'voice' | 'typed' | 'bot' | 'brain';
 
