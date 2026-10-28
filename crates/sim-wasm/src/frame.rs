@@ -10,6 +10,8 @@ use crate::compat;
 
 /// 04-battle.md §9: faces the direction of motion when moving faster than this, tiles/s.
 const FACE_MOTION: f64 = 0.35;
+/// 04-battle.md §9: a man walks (and so can walk backwards) above this pace, tiles/s.
+const WALK_MIN: f64 = 0.2;
 
 pub struct Frame {
     pub sf32: Vec<f32>,
@@ -18,6 +20,8 @@ pub struct Frame {
     pub ticks: Vec<u32>,
     pub qf32: Vec<f32>,
     pub qu32: Vec<u32>,
+    /// The squad's unit (contracts `squad_buf`, the second u32 per squad).
+    pub qunit: Vec<u32>,
     pub events: Vec<u32>,
     pub fog: Vec<u8>,
     pub soldiers: usize,
@@ -42,6 +46,7 @@ impl Frame {
             ticks: Vec::with_capacity(cap * sb::TICK_FIELDS),
             qf32: Vec::with_capacity(qcap * qb::F32_FIELDS),
             qu32: Vec::with_capacity(qcap),
+            qunit: Vec::with_capacity(qcap),
             events: Vec::with_capacity(4096 * EVENT_WORDS),
             fog: vec![255; tiles],
             soldiers: 0,
@@ -62,14 +67,16 @@ impl Frame {
     }
 
     fn resize(&mut self, cap: usize, qcap: usize) {
-        let before = (self.sf32.as_ptr(), self.su32.as_ptr(), self.strikes.as_ptr(), self.ticks.as_ptr(), self.qf32.as_ptr(), self.qu32.as_ptr());
+        let ptrs = |f: &Frame| [f.sf32.as_ptr() as usize, f.su32.as_ptr() as usize, f.strikes.as_ptr() as usize, f.ticks.as_ptr() as usize, f.qf32.as_ptr() as usize, f.qu32.as_ptr() as usize, f.qunit.as_ptr() as usize];
+        let before = ptrs(self);
         self.sf32.resize(cap * sb::F32_FIELDS, 0.0);
         self.su32.resize(cap, 0);
         self.strikes.resize(cap, 0);
         self.ticks.resize(cap * sb::TICK_FIELDS, sb::NEVER);
         self.qf32.resize(qcap * qb::F32_FIELDS, 0.0);
         self.qu32.resize(qcap, 0);
-        let after = (self.sf32.as_ptr(), self.su32.as_ptr(), self.strikes.as_ptr(), self.ticks.as_ptr(), self.qf32.as_ptr(), self.qu32.as_ptr());
+        self.qunit.resize(qcap, 0);
+        let after = ptrs(self);
         if before != after {
             self.layout += 1;
         }
@@ -89,6 +96,18 @@ impl Frame {
             let s = &b.squads[m.squad as usize];
             let has_commander = !s.name.is_empty() && s.kind != Kind::Captain;
             let routing = s.state == SquadState::Routing;
+            let aim = if m.alive { compat::target(b, k).and_then(|j| b.soldiers.get(j)).map(|t| (t.x, t.y)) } else { None };
+            // 04-battle.md §9's priority: a breathing beast faces its prey (a drake hunting keeps its eyes on it,
+            // springing back included); else the motion when moving; else the target; else the squad's facing
+            let moving = m.pace > FACE_MOTION && (m.vx != 0.0 || m.vy != 0.0);
+            let face = match aim {
+                Some((ax, ay)) if compat::breathes(s) => sim::math::atan2(ay - m.y, ax - m.x),
+                _ if moving => sim::math::atan2(m.vy, m.vx),
+                Some((ax, ay)) => sim::math::atan2(ay - m.y, ax - m.x),
+                None => s.facing,
+            };
+            // walking against his facing: the stride plays in reverse
+            let backing = m.alive && m.pace > WALK_MIN && m.vx * sim::math::cos(face) + m.vy * sim::math::sin(face) < 0.0;
             let bits = m.squad as u32
                 | (s.kind as u32 & 0xf) << 16
                 | (s.team as u32 & 1) << 20
@@ -97,18 +116,11 @@ impl Frame {
                 | ((has_commander && m.slot == 0) as u32) << 23
                 | ((s.kind == Kind::Captain) as u32) << 24
                 | (s.rank as u32 & 3) << 26
-                | (compat::engaged(b, k) as u32) << 28;
+                | (compat::engaged(b, k) as u32) << 28
+                | (backing as u32) << 29;
             // TODO(day 4): bit 25 recruit, once freed villages add men.
             self.su32[k] = bits;
             self.strikes[k] = m.strikes;
-            let aim = if m.alive { compat::target(b, k).and_then(|j| b.soldiers.get(j)).map(|t| (t.x, t.y)) } else { None };
-            let face = if m.pace > FACE_MOTION && (m.vx != 0.0 || m.vy != 0.0) {
-                sim::math::atan2(m.vy, m.vx)
-            } else if let Some((ax, ay)) = aim {
-                sim::math::atan2(ay - m.y, ax - m.x)
-            } else {
-                s.facing
-            };
             let o = k * sb::F32_FIELDS;
             let f = &mut self.sf32[o..o + sb::F32_FIELDS];
             f[sb::X] = m.x as f32;
@@ -121,6 +133,7 @@ impl Frame {
             let (hit, died) = compat::hit_and_death(b, k);
             self.ticks[k * sb::TICK_FIELDS + sb::HIT_AT] = hit;
             self.ticks[k * sb::TICK_FIELDS + sb::DIED_AT] = if m.alive { sb::NEVER } else { died };
+            self.ticks[k * sb::TICK_FIELDS + sb::BREATH_AT] = if m.alive { compat::breath_cycle(b, k) } else { sb::NEVER };
         }
         for (j, s) in b.squads.iter().enumerate() {
             let alive = s.soldiers.iter().filter(|&&k| b.soldiers[k].alive).count();
@@ -140,6 +153,7 @@ impl Frame {
                 | (s.rank as u32 & 3) << 14
                 | (s.full.min(255) as u32) << 16
                 | (alive.min(255) as u32) << 24;
+            self.qunit[j] = compat::unit(s) as u32 & qb::UNIT_MASK;
         }
         self.sync_fog(b, team)
     }
@@ -224,6 +238,7 @@ mod tests {
             assert_eq!((w >> 16) & 0xff, s.full as u32);
             assert_eq!(w >> 24, s.full as u32, "everyone alive");
             assert_eq!(f.qf32[j * qb::F32_FIELDS + qb::MORALE], 1.0);
+            assert_eq!(f.qunit[j], compat::unit(s) as u32);
         }
         assert_eq!(f.fog[..], b.fog(0)[..]);
         assert!(f.fog.contains(&2), "our army sees round itself");
@@ -252,6 +267,35 @@ mod tests {
         assert_eq!(f32::from_bits(f.events[3]), 2.25);
         assert_eq!(f.events[4], 9);
         assert_eq!(f.drain(&mut b), 0, "drained once");
+        assert_eq!(f.ticks[3 * sb::TICK_FIELDS + sb::BREATH_AT], sb::NEVER, "no breath yet");
+        b.soldiers[3].cycle = 5;
+        f.sync(&b, 0);
+        assert_eq!(f.ticks[3 * sb::TICK_FIELDS + sb::BREATH_AT], 5, "the breath cycle is dated by the sim");
         println!("big army: {} soldiers in {} squads", f.soldiers, f.squads);
+    }
+
+    #[test]
+    fn a_man_stepping_back_from_his_foe_is_backing() {
+        let mut b = battle("big");
+        b.step(1);
+        let foe = b.soldiers.iter().position(|m| b.squads[m.squad as usize].team == 1).unwrap();
+        let k = b.soldiers.iter().position(|m| b.squads[m.squad as usize].team == 0 && b.squads[m.squad as usize].kind == Kind::Spear).unwrap();
+        let (fx, fy) = (b.soldiers[foe].x, b.soldiers[foe].y);
+        let m = &mut b.soldiers[k];
+        let (dx, dy) = (fx - m.x, fy - m.y);
+        let n = sim::math::hyp(dx, dy);
+        // slow (under the motion threshold), facing his target, walking away from it
+        m.target = Some(foe);
+        m.pace = 0.3;
+        m.vx = -0.3 * dx / n;
+        m.vy = -0.3 * dy / n;
+        let mut f = Frame::new(&b);
+        f.sync(&b, 0);
+        assert_eq!((f.su32[k] >> 29) & 1, 1, "backing");
+        let face = f.sf32[k * sb::F32_FIELDS + sb::FACE] as f64;
+        assert!((face - sim::math::atan2(dy, dx)).abs() < 1e-5, "he faces his foe");
+        let backing = f.su32[..f.soldiers].iter().filter(|&&w| (w >> 29) & 1 == 1).count();
+        assert_eq!(backing, 1, "nobody else walks backwards");
+        println!("backing: soldier {k} facing {face:.3}, {backing} backing");
     }
 }

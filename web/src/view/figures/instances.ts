@@ -58,7 +58,7 @@ class PartMesh {
   constructor(readonly id: PartId, def: PartDef, atlas: THREE.Texture | undefined, receiveShadow: boolean) {
     // each part owns its geometry (it carries the per-instance attributes)
     this.geometry = partGeometry(id).clone();
-    const opts = { cloth: def.cloth, thin: !!def.thin, atlas };
+    const opts = { cloth: def.cloth, thin: !!def.thin, atlas, glow: !!def.glow, flame: !!def.flame };
     const mat = figureMaterial(opts);
     this.mesh = new THREE.InstancedMesh(this.geometry, mat, this.cap);
     this.mesh.name = `fig:${id}`;

@@ -1,11 +1,46 @@
-import type { Kind, Team } from '../../contracts';
+import { UNIT_ORDER, type Kind, type Team, type Unit } from '../../contracts';
+import { BLIGHTMAN, BROOD_BODY, DRAKE_SCALE, TROLL_BODY } from './blight-parts';
 import { hash32 } from './hash';
 import {
-  ARCHER_SLEEVE, CAPTAIN_HELM, CAPTAIN_PLUME, CHARGER, COATS, GOLD, HAIR, HERALDRY, HOSE, MAIL, SKIN, SMOCKS, STEEL, TEAM,
+  ARCHER_SLEEVE, BLIGHT, CAPTAIN_HELM, CAPTAIN_PLUME, CHARGER, COATS, GOLD, HAIR, HERALDRY, HIDES, HOSE, MAIL, SKIN, SMOCKS,
+  STEEL, TEAM, TROLL,
 } from './palette';
 
 // docs/spec/02-look.md §5 "Kinds", "Rank marks" and "Peoples": what a man wears, from his kind, team, rank and id.
 // Another people would be another `outfit` (its own skin and hair palettes, picked by id % n).
+
+/**
+ * The body a figure is drawn with. Men (and their horses) are the warband's and the villages'; the blight's units
+ * are beasts: hunched blight-men, stone trolls, drakes and the broodlord (00-start-here.md §A2).
+ */
+export type Form = 'man' | 'blightman' | 'troll' | 'drake' | 'broodlord';
+
+/**
+ * The form for a unit. The blight's units are themselves. An enemy given a soldier's unit is still the blight, never
+ * a man in red: its general is the broodlord, its horse are drakes, anything else a blight-man (out/decisions-blight-
+ * view.md "Every enemy is the blight"). A beast on our side is a drake (the tamed drake of the Myths).
+ */
+export function formOf(w: { unit: Unit; kind: Kind; team: Team; captain: boolean }): Form {
+  switch (w.unit) {
+    case 'blightman':
+    case 'troll':
+    case 'drake':
+    case 'broodlord':
+      return w.unit;
+    default:
+      break;
+  }
+  if (w.team === 1) {
+    if (w.captain || w.kind === 'captain') return 'broodlord';
+    if (w.kind === 'horse') return 'drake';
+    if (w.kind === 'beast') return 'troll';
+    return 'blightman';
+  }
+  return w.kind === 'beast' ? 'drake' : 'man';
+}
+
+/** Which weapon a blight-man carries. */
+export type BlightArms = 'club' | 'cleaver' | 'claws' | 'spear';
 
 export type Head = 'none' | 'kettle' | 'nasal' | 'coif+nasal' | 'hood' | 'cap' | 'kerchief';
 export type Gear = 'spear' | 'sword+shield' | 'bow' | 'pitchfork' | 'lance' | 'sword' | 'bundle' | 'none';
@@ -37,6 +72,16 @@ export interface Look {
   mounted: boolean;
   coat: number;
   saddleCloth: number;
+  /** The body (men are 'man'; the rest is the blight's, posed by blight.ts). */
+  form: Form;
+  /** Blight bodies: the flesh (stone for trolls), the hide of their rags, their weapon and a leader's crown. */
+  flesh: number;
+  hide: number;
+  arms: BlightArms;
+  /** Trolls: a boulder maul instead of the club. */
+  maul: boolean;
+  /** A blight-man wears a hide over his hump. */
+  mantle: boolean;
 }
 
 const pick = <T>(list: readonly T[], id: number, salt: number) => list[hash32(id, salt, 0x5eed) % list.length];
@@ -44,6 +89,7 @@ const pick = <T>(list: readonly T[], id: number, salt: number) => list[hash32(id
 export interface Who {
   id: number;
   kind: Kind;
+  unit: Unit;
   team: Team;
   rank: number;
   commander: boolean;
@@ -83,7 +129,14 @@ export function outfit(w: Who): Look {
     mounted: false,
     coat: pick(COATS, w.id, 2),
     saddleCloth: T[2],
+    form: formOf(w),
+    flesh: 0,
+    hide: 0,
+    arms: 'club',
+    maul: false,
+    mantle: false,
   };
+  if (look.form !== 'man') return blight(look, w);
   const kind = w.captain ? 'captain' : w.kind;
   switch (kind) {
     case 'spear':
@@ -155,8 +208,42 @@ export function outfit(w: Who): Look {
   return look;
 }
 
+/** The blight's looks: flesh and hide by id, the weapon by id (a spear company's carry bone spears). */
+function blight(look: Look, w: Who): Look {
+  const lead = w.commander ? 1.16 : 1;
+  look.hide = pick(HIDES, w.id, 21);
+  switch (look.form) {
+    case 'blightman': {
+      look.flesh = pick([BLIGHT[2], BLIGHT[3]], w.id, 22);
+      const roll = hash32(w.id, 23, 0x5eed) % 6;
+      look.arms = w.kind === 'spear' ? 'spear' : roll < 3 ? 'club' : roll < 5 ? 'cleaver' : 'claws';
+      look.mantle = hash32(w.id, 24, 0x5eed) % 2 === 0 || w.commander;
+      look.scale = BLIGHTMAN.scale * lead;
+      break;
+    }
+    case 'troll':
+      look.flesh = pick([TROLL[0], TROLL[0], TROLL[1]], w.id, 22);
+      look.maul = hash32(w.id, 25, 0x5eed) % 3 === 0;
+      look.scale = TROLL_BODY.scale * lead;
+      break;
+    case 'drake':
+      look.flesh = w.commander ? BLIGHT[1] : BLIGHT[2];
+      look.scale = DRAKE_SCALE * lead;
+      break;
+    case 'broodlord':
+      look.flesh = BLIGHT[2];
+      look.scale = BROOD_BODY.scale;
+      break;
+    default:
+      break;
+  }
+  look.mounted = false;
+  look.gear = 'none';
+  return look;
+}
+
 /** A key that changes whenever the look would. */
 export function lookKey(w: Who): number {
-  return (((w.rank & 3) | (w.team << 2) | (w.commander ? 8 : 0) | (w.captain ? 16 : 0) | (w.recruit ? 32 : 0)) << 4) | KINDS.indexOf(w.kind);
+  return (((((w.rank & 3) | (w.team << 2) | (w.commander ? 8 : 0) | (w.captain ? 16 : 0) | (w.recruit ? 32 : 0)) << 4) | KINDS.indexOf(w.kind)) << 4) | UNIT_ORDER.indexOf(w.unit);
 }
 const KINDS: Kind[] = ['spear', 'shield', 'archer', 'horse', 'levy', 'folk', 'captain', 'beast'];

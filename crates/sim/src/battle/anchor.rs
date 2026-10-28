@@ -29,6 +29,8 @@ impl Battle {
         sc.shot.resize(n, false);
         sc.flanked.resize(n, false);
         sc.defend.resize(n, None);
+        sc.scorch.resize(n, 0.0);
+        sc.prey.resize(n, Vec::new());
         for i in 0..n {
             let s = &self.squads[i];
             let alive = s.alive as usize;
@@ -61,6 +63,19 @@ impl Battle {
             sc.shot[i] = false;
             sc.flanked[i] = false;
             sc.defend[i] = None;
+            sc.scorch[i] = 0.0;
+            sc.prey[i].clear();
+        }
+        // The spots each pack's breathers have taken, from the tick's start (so no man reads another's choice).
+        for k in 0..self.soldiers.len() {
+            let m = &self.soldiers[k];
+            if let Some(t) = m.target
+                && m.alive
+                && self.squads[m.squad as usize].spec.breath > 0.0
+            {
+                let at = self.soldiers[t].pos();
+                self.scratch.prey[m.squad as usize].push((k, at));
+            }
         }
     }
 
@@ -324,8 +339,10 @@ impl Battle {
     }
 
     /// §5 "When engaged": face the enemy at 2.5 rad/s; a melee block follows its brawl. The anchor drifts by the
-    /// offset between the men and their slots at `dt·2`, so the block follows without creeping backward. A
-    /// defensive stance keeps it within the leash of its post.
+    /// offset between the men and their slots at `dt·2`, so the block follows without creeping backward. Meeting a
+    /// drake, the block presses forward instead: the anchor walks at the company's pace (the cohesion gate holding
+    /// it together) until its front rank stands in reach of the nearest drake. A defensive stance keeps it within
+    /// the leash of its post.
     fn fight_anchor(&mut self, i: usize) {
         let c = self.tune.combat.clone();
         let t = self.squads[i].threat.expect("engaged") as usize;
@@ -335,12 +352,17 @@ impl Battle {
         let drift = (DT * c.drift_rate).min(1.0);
         let (men, slots) = (self.scratch.centre[i], self.scratch.slot_centre[i]);
         let leash = self.rules(i).leash;
+        let press = (self.squads[t].spec.breath > 0.0).then(|| self.press_step(i, t)).flatten();
+        self.tally.presses += press.is_some() as u64;
         let s = &mut self.squads[i];
         s.facing = turn(s.facing, face, c.face_rate * DT);
         s.state = SquadState::Fighting;
         s.path.clear();
         if !s.spec.ranged() {
-            let (mut nx, mut ny) = (s.x + (men.x - slots.x) * drift, s.y + (men.y - slots.y) * drift);
+            let (mut nx, mut ny) = match press {
+                Some(p) => (p.x, p.y),
+                None => (s.x + (men.x - slots.x) * drift, s.y + (men.y - slots.y) * drift),
+            };
             if let Some((post, r)) = leash {
                 let d = P::new(nx, ny).dist(post);
                 if d > r {
@@ -351,6 +373,41 @@ impl Battle {
             s.x = nx;
             s.y = ny;
         }
+    }
+
+    /// Meeting a drake (§5): the anchor's next point, one step toward the drake nearest it until the front rank
+    /// stands at the men's stand-off (`0.92·reach` from body to body), at the company's pace through the cohesion
+    /// gate; `None` once there.
+    fn press_step(&self, i: usize, t: usize) -> Option<P> {
+        let (mv, c) = (&self.tune.movement, &self.tune.combat);
+        let s = &self.squads[i];
+        let here = P::new(s.x, s.y);
+        let mut near: Option<(f64, usize)> = None;
+        for &k in &self.squads[t].soldiers {
+            let m = &self.soldiers[k];
+            let d = m.pos().dist(here);
+            if m.alive && near.is_none_or(|(b, bk)| d < b || (d == b && k < bk)) {
+                near = Some((d, k));
+            }
+        }
+        let (d, k) = near?;
+        let stand = c.stand * c.reach + s.spec.radius + self.squads[t].spec.radius - 2.0 * mv.base_radius;
+        if d <= stand + 1e-9 {
+            return None;
+        }
+        let to = self.soldiers[k].pos();
+        let dir = P::new((to.x - here.x) / d, (to.y - here.y) / d);
+        let loose = self.looseness(i);
+        let gate = if loose <= mv.loose_slow {
+            1.0
+        } else if loose <= mv.loose_stop {
+            mv.loose_pace
+        } else {
+            0.0
+        };
+        let step = (s.speed(&self.tune) * s.how.pace.unwrap_or(1.0) * self.ground_pace(here, dir) * gate * DT).min(d - stand);
+        let next = P::new(here.x + dir.x * step, here.y + dir.y * step);
+        self.walkable(next).then_some(next)
     }
 
     /// §3d followers: march to the station when more than 1 tile off, stop within 0.3, at

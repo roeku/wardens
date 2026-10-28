@@ -1,15 +1,19 @@
 //! Who stands where when a battle opens. Until the muster and the campaign's garrisons land (day 5), a battle
-//! opens with the voice fixture's warband against a garrison of blight-men (DECISIONS.md D-05), now led by their
-//! general at the keep; an open field opens with the same companies on both sides (`Setup::field`).
+//! opens with the voice fixture's warband against the blight (docs/spec/00-start-here.md §A2, §A4): blight-men, a
+//! troll company and a drake pack under a broodlord, the blight's commander. At a held place they stand before the
+//! keep with the broodlord on it (`Setup::default`); on the open field they deploy as an army round him
+//! (`Setup::field`). The old symmetric human field stays for regression sweeps (`Setup::mirror`).
 
 use super::{Battle, How, Order, RideState, Soldier, Squad, SquadState};
 use crate::contracts::{Kind, P, SquadId, Team, Tick, Way};
 use crate::map::MapKind;
 use crate::math::atan2;
+use crate::units::Unit;
 
 #[derive(Clone, Debug)]
 pub struct Company {
-    pub kind: Kind,
+    /// Which unit it is; its kind and stats come from the units table (`Tune::units`).
+    pub unit: Unit,
     /// The commander's name; empty for a company without one.
     pub name: String,
     pub rank: u8,
@@ -20,8 +24,13 @@ pub struct Company {
 }
 
 impl Company {
+    /// A company of the kind's own unit (a bare beast is a drake pack).
     pub fn new(kind: Kind, name: &str) -> Company {
-        Company { kind, name: name.to_string(), rank: 0, way: None, freed: false }
+        Company::of(Unit::of_kind(kind), name)
+    }
+
+    pub fn of(unit: Unit, name: &str) -> Company {
+        Company { unit, name: name.to_string(), rank: 0, way: None, freed: false }
     }
 }
 
@@ -30,54 +39,84 @@ pub struct Setup {
     /// The player's companies; the captain is always added.
     pub warband: Vec<Company>,
     pub garrison: Vec<Company>,
-    /// Team 1 has a general (a captain of its own), at its deploy point.
-    pub general: bool,
+    /// Team 1's commander (a captain-kind unit: the broodlord, or the human general), at its deploy point.
+    pub general: Option<Company>,
     /// Team 1 deploys as an army round its general, mirroring team 0's stations (the open field); otherwise its
     /// companies stand in a line 2.5 tiles before the keep, each at its own post.
     pub mirror: bool,
 }
 
 impl Default for Setup {
+    /// A held place (keep, town, ford): the blight stands before the keep, the broodlord on it.
     fn default() -> Setup {
-        Setup {
-            warband: vec![
-                Company::new(Kind::Spear, "WIL"),
-                Company::new(Kind::Shield, "ODA"),
-                Company::new(Kind::Archer, "REN"),
-                Company::new(Kind::Horse, "BORS"),
-            ],
-            garrison: vec![Company::new(Kind::Levy, ""), Company::new(Kind::Levy, ""), Company::new(Kind::Levy, "")],
-            general: true,
-            mirror: false,
-        }
+        Setup { warband: warband(), garrison: nest(), general: Some(broodlord()), mirror: false }
     }
 }
 
 const GARRISON_AHEAD: f64 = 2.5;
 
+/// The voice fixture's warband: WIL's spears, ODA's shields, REN's bows and BORS's riders.
+fn warband() -> Vec<Company> {
+    vec![Company::new(Kind::Spear, "WIL"), Company::new(Kind::Shield, "ODA"), Company::new(Kind::Archer, "REN"), Company::new(Kind::Horse, "BORS")]
+}
+
+/// The blight's host for the slice (00-start-here.md §A4): a swarm of three companies of blight-men, a troll company
+/// and a drake pack. Without commanders of their own: the broodlord commands them all (out/decisions-blight-sim.md).
+fn blight() -> Vec<Company> {
+    use Unit::*;
+    [BlightMan, BlightMan, BlightMan, Troll, Drake].into_iter().map(|u| Company::of(u, "")).collect()
+}
+
+/// The blight holding a place, its nest: the host with a fourth company of blight-men and a second drake pack. A
+/// garrison fights piecemeal round its keep (one company guards it), so a nest the host's size lost four battles in
+/// five to the commander (out/decisions-blight-sim.md).
+fn nest() -> Vec<Company> {
+    use Unit::*;
+    [BlightMan, BlightMan, BlightMan, BlightMan, Troll, Drake, Drake].into_iter().map(|u| Company::of(u, "")).collect()
+}
+
+fn broodlord() -> Company {
+    Company::of(Unit::Broodlord, "BROODLORD")
+}
+
 impl Setup {
-    /// The symmetric open-field setup for balance sweeps: both sides a captain and the same four companies.
+    /// The open field against the blight: the warband against the blight's host deployed as an army round its
+    /// broodlord, stations mirrored left and right.
     pub fn field() -> Setup {
-        let base = Setup::default();
+        Setup { warband: warband(), garrison: blight(), general: Some(broodlord()), mirror: true }
+    }
+
+    /// The symmetric human field of day 3, kept for regression sweeps: both sides a captain and the same four
+    /// companies (GRIM, MAUL, ROOK, FANG facing WIL, ODA, REN, BORS).
+    pub fn mirror() -> Setup {
         let garrison = [(Kind::Spear, "GRIM"), (Kind::Shield, "MAUL"), (Kind::Archer, "ROOK"), (Kind::Horse, "FANG")]
             .into_iter()
             .map(|(k, n)| Company::new(k, n))
             .collect();
-        Setup { garrison, mirror: true, ..base }
+        Setup { warband: warband(), garrison, general: Some(Company::new(Kind::Captain, "GENERAL")), mirror: true }
     }
 
-    /// The setup a map kind opens with when nothing else is given.
+    /// The setup a map kind opens with when nothing else is given: the blight, as an army on the open field.
     pub fn for_map(kind: MapKind) -> Setup {
         if kind == MapKind::Field { Setup::field() } else { Setup::default() }
+    }
+
+    /// A setup by name: `blight` (or empty) is what the map kind opens with; `mirror` is the human field.
+    pub fn named(name: &str, kind: MapKind) -> Result<Setup, String> {
+        match name {
+            "" | "blight" => Ok(Setup::for_map(kind)),
+            "mirror" => Ok(Setup::mirror()),
+            _ => Err(format!("no setup {name} (blight, mirror)")),
+        }
     }
 
     pub(super) fn deploy(&self, b: &mut Battle) {
         let (ours, theirs) = (b.map.deploy[0], b.map.deploy[1]);
         let heading = atan2(theirs.y - ours.y, theirs.x - ours.x);
         let back = heading + std::f64::consts::PI;
-        army(b, 0, ours, heading, &self.warband, "CAPTAIN", true, false);
+        army(b, 0, ours, heading, &self.warband, Some(&Company::new(Kind::Captain, "CAPTAIN")), false);
         if self.mirror {
-            army(b, 1, theirs, back, &self.garrison, "GENERAL", self.general, true);
+            army(b, 1, theirs, back, &self.garrison, self.general.as_ref(), true);
             return;
         }
         let n = self.garrison.len() as f64;
@@ -87,39 +126,56 @@ impl Setup {
             b.squads[id].detached = true;
         }
         // The general comes last, so the garrison keeps the ids it had before he joined.
-        if self.general {
+        if let Some(g) = &self.general {
             let a = &mut b.armies[1];
             a.heading = back;
             a.aim = back;
-            add(b, 1, &Company::new(Kind::Captain, "GENERAL"), theirs, back, ((0.0, 0.0), (0.0, 0.0)));
+            add(b, 1, g, theirs, back, ((0.0, 0.0), (0.0, 0.0)));
         }
     }
 }
 
 /// A captain and his companies at their line stations, following him. `mirrored` flips left and right, so an army
 /// facing west stands as the mirror image of one facing east (the open field is mirrored, not rotated).
-#[allow(clippy::too_many_arguments)]
-fn army(b: &mut Battle, team: Team, at: P, heading: f64, companies: &[Company], captain: &str, with_captain: bool, mirrored: bool) {
+fn army(b: &mut Battle, team: Team, at: P, heading: f64, companies: &[Company], captain: Option<&Company>, mirrored: bool) {
     let a = &mut b.armies[team as usize];
     a.heading = heading;
     a.aim = heading;
     a.aim_from = at;
-    if with_captain {
-        add(b, team, &Company::new(Kind::Captain, captain), at, heading, ((0.0, 0.0), (0.0, 0.0)));
+    if let Some(c) = captain {
+        add(b, team, c, at, heading, ((0.0, 0.0), (0.0, 0.0)));
     }
     for (c, st) in companies.iter().zip(stations(b, companies)) {
         let st = if mirrored { ((st.0.0, -st.0.1), (st.1.0, -st.1.1)) } else { st };
         let id = add(b, team, c, at.offset(heading, st.0.0, st.0.1), heading, st);
-        if with_captain {
+        if captain.is_some() {
             b.squads[id].order = Order::Follow;
         }
     }
 }
 
-/// What a company is to the army's stations.
-fn line_kind(c: &Company, b: &Battle) -> bool {
-    let spec = b.tune.kinds.get(c.kind);
-    !c.freed && !spec.ranged() && c.kind != Kind::Horse && c.kind != Kind::Captain
+/// Where a company stands in the army: the line, the bows, the wings (horse, and packs, which hunt round the
+/// ends), or the freed reserve.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Place {
+    Line,
+    Bows,
+    Wing,
+    Reserve,
+}
+
+fn place(c: &Company, b: &Battle) -> Place {
+    let kind = b.tune.unit_kind(c.unit);
+    let spec = b.tune.unit_spec(c.unit).unwrap_or_else(|_| b.tune.kinds.get(kind).clone());
+    if c.freed {
+        Place::Reserve
+    } else if spec.ranged() {
+        Place::Bows
+    } else if kind == Kind::Horse || spec.pack {
+        Place::Wing
+    } else {
+        Place::Line
+    }
 }
 
 /// Each company's (line, column) stations around the captain, as (ahead, left), 04-battle.md §3d, filling
@@ -132,10 +188,8 @@ fn line_kind(c: &Company, b: &Battle) -> bool {
 fn stations(b: &Battle, companies: &[Company]) -> Vec<((f64, f64), (f64, f64))> {
     let a = &b.tune.army;
     let n = companies.len();
-    let line: Vec<usize> = (0..n).filter(|&i| line_kind(&companies[i], b)).collect();
-    let bows: Vec<usize> = (0..n).filter(|&i| !companies[i].freed && b.tune.kinds.get(companies[i].kind).ranged()).collect();
-    let horse: Vec<usize> = (0..n).filter(|&i| !companies[i].freed && companies[i].kind == Kind::Horse).collect();
-    let reserve: Vec<usize> = (0..n).filter(|&i| companies[i].freed).collect();
+    let of = |p: Place| -> Vec<usize> { (0..n).filter(|&i| place(&companies[i], b) == p).collect() };
+    let (line, bows, horse, reserve) = (of(Place::Line), of(Place::Bows), of(Place::Wing), of(Place::Reserve));
     let mut lines = vec![(0.0, 0.0); n];
     let mut rows = |ids: &[usize], per_row: usize, ahead: f64, step: f64| {
         for (r, chunk) in ids.chunks(per_row.max(1)).enumerate() {
@@ -172,17 +226,20 @@ fn stations(b: &Battle, companies: &[Company]) -> Vec<((f64, f64), (f64, f64))> 
 
 /// Adds a company (its commander as soldier 0, with 3× hp) at `at`, every man in his slot. Returns its index.
 fn add(b: &mut Battle, team: Team, c: &Company, at: P, facing: f64, stations: ((f64, f64), (f64, f64))) -> usize {
-    let spec = b.tune.kinds.get(c.kind).clone();
+    let kind = b.tune.unit_kind(c.unit);
+    // Tune::with_override checks every unit, so this falls back only for a hand-built Tune.
+    let spec = b.tune.unit_spec(c.unit).unwrap_or_else(|_| b.tune.kinds.get(kind).clone());
     let id = b.squads.len() as SquadId;
     let max_morale = b.tune.rank.morale_base + b.tune.rank.morale * c.rank as f64;
     let hp = spec.hp * (1.0 + b.tune.rank.hp * c.rank as f64);
     let men = spec.men;
-    let commanded = !c.name.is_empty() && c.kind != Kind::Captain;
+    let commanded = !c.name.is_empty() && kind != Kind::Captain;
     let first = b.soldiers.len();
     let squad = Squad {
         id,
         team,
-        kind: c.kind,
+        kind,
+        unit: c.unit,
         name: c.name.clone(),
         spec,
         rank: c.rank,
@@ -246,6 +303,7 @@ fn add(b: &mut Battle, team: Team, c: &Company, at: P, facing: f64, stations: ((
             since_contact: b.tune.combat.charge_regain_s,
             engaged: false,
             heading: facing,
+            cycle: Tick::MAX,
             route: Vec::new(),
             route_goal: p,
             route_at: 0,

@@ -1,7 +1,7 @@
 {
   "seed": 4,
   "map": { "kind": "keep", "width": 48 },
-  "tick": 1800,
+  "tick": 2700,
   "bots": [{ "team": 1, "bot": "garrison" }],
   "log": [
     { "tick": 15, "team": 0, "deed": { "do": "move", "who": { "t": "army" }, "to": { "x": 20.0, "y": 13.5 } }, "src": "tap" },

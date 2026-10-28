@@ -225,6 +225,38 @@ pub(crate) fn pick<'a>(b: &Battle, team: Team, seen: &'a [Seen], from: P, r: f64
     best(false).or_else(|| best(true))
 }
 
+/// How a beast company chooses its quarry (04-battle.md §7 "Contact"), or `None` for every other company (and when
+/// nothing fits, so the caller's own rule applies):
+/// - **breathers** (drakes) score `0.5·d − men`, horse +8, bane +12, braced +3, already fighting −4, lowest
+///   first, within 24;
+/// - **other beasts** (trolls, as elephants) go at the nearest foot within 24: the line (melee foot) first, then any
+///   foot.
+///
+/// Braced: a company that takes charges lightly (`chargeTaken < 1`, spears) standing rather than marching.
+pub(crate) fn quarry<'a>(b: &Battle, i: usize, seen: &'a [Seen], from: P) -> Option<&'a Seen> {
+    let s = &b.squads[i];
+    let q = &b.tune.bots.quarry;
+    if !s.spec.beast || s.kind == Kind::Captain {
+        return None;
+    }
+    let live = |f: &&Seen| !f.routing && f.at.dist(from) <= if s.spec.breath > 0.0 { q.breather_r } else { q.foot_r };
+    let near = |a: &&Seen, c: &&Seen| a.at.dist(from).total_cmp(&c.at.dist(from)).then(a.id.cmp(&c.id));
+    if s.spec.breath > 0.0 {
+        let score = |f: &Seen| {
+            let o = &b.squads[f.id as usize];
+            let braced = o.spec.charge_taken < 1.0 && o.state != crate::battle::SquadState::Marching;
+            q.dist * f.at.dist(from) - q.men * f.men as f64
+                + if o.kind == Kind::Horse && !o.spec.beast { q.horse } else { 0.0 }
+                + if o.spec.bane > 1.0 { q.bane } else { 0.0 }
+                + if braced { q.braced } else { 0.0 }
+                + if f.fighting { q.fighting } else { 0.0 }
+        };
+        return seen.iter().filter(live).min_by(|a, c| score(a).total_cmp(&score(c)).then(a.id.cmp(&c.id)));
+    }
+    let foot = |f: &&Seen| f.kind != Kind::Horse && !f.captain;
+    seen.iter().filter(live).filter(foot).filter(|f| !f.ranged).min_by(near).or_else(|| seen.iter().filter(live).filter(foot).min_by(near))
+}
+
 /// `charge`: every company attacks the nearest foe it sees, or marches on the enemy's deploy point fighting; the
 /// captain rides with them once a foe is seen (an army attack puts him on his ride).
 fn charge(b: &Battle, team: Team, out: &mut Orders) {
@@ -278,6 +310,56 @@ mod tests {
         let g = play(5, BotKind::Commander, BotKind::Garrison, MapKind::Keep, 60);
         assert!(g.2 > 0);
         println!("bots: 2 runs agree ({:016x}), charge+general issued {} orders, commander+garrison {}", a.0, a.2, g.2);
+    }
+
+    #[test]
+    fn beasts_choose_their_quarry() {
+        let b = Battle::new(7, MapOpts { kind: MapKind::Field, width: 48 }, &Setup::field(), Tune::default());
+        let of = |u: crate::units::Unit| b.squads.iter().position(|s| s.unit == u).unwrap();
+        let (drake, troll) = (of(crate::units::Unit::Drake), of(crate::units::Unit::Troll));
+        // Everything of ours, as if seen where it stands.
+        let all: Vec<Seen> = b
+            .squads
+            .iter()
+            .filter(|s| s.team == 0)
+            .map(|s| Seen {
+                id: s.id,
+                kind: s.kind,
+                at: b.centre(s.id as usize),
+                men: s.alive as usize,
+                routing: false,
+                fighting: false,
+                ranged: s.spec.ranged(),
+                captain: s.kind == Kind::Captain,
+                morale: 1.0,
+            })
+            .collect();
+        let q = &b.tune.bots.quarry;
+        let from = P::new(24.0, 13.5);
+        let score = |f: &Seen| {
+            let o = &b.squads[f.id as usize];
+            let braced = o.spec.charge_taken < 1.0 && o.state != crate::battle::SquadState::Marching;
+            q.dist * f.at.dist(from) - q.men * f.men as f64 + if o.kind == Kind::Horse { q.horse } else { 0.0 } + if braced { q.braced } else { 0.0 }
+        };
+        let want = all.iter().min_by(|a, c| score(a).total_cmp(&score(c)).then(a.id.cmp(&c.id))).unwrap();
+        let got = quarry(&b, drake, &all, from).unwrap();
+        assert_eq!(got.id, want.id, "the breather's score");
+        // Fighting already makes a company 4 better.
+        let mut busy = all.clone();
+        let second = busy.iter().filter(|f| f.id != want.id).min_by(|a, c| score(a).total_cmp(&score(c))).unwrap().id;
+        busy.iter_mut().find(|f| f.id == second).unwrap().fighting = true;
+        let fights = score(busy.iter().find(|f| f.id == second).unwrap()) + q.fighting < score(want);
+        assert_eq!(quarry(&b, drake, &busy, from).unwrap().id == second, fights);
+        // A troll goes at the nearest foot of the line, never the horse, the bows or the captain while foot stand.
+        let t = quarry(&b, troll, &all, from).unwrap();
+        assert!(!t.ranged && t.kind != Kind::Horse && !t.captain);
+        let line_near = all.iter().filter(|f| !f.ranged && f.kind != Kind::Horse && !f.captain).map(|f| f.at.dist(from)).fold(f64::INFINITY, f64::min);
+        assert_eq!(t.at.dist(from), line_near);
+        // Blight-men and the broodlord have no quarry rule.
+        let bm = of(crate::units::Unit::BlightMan);
+        assert!(quarry(&b, bm, &all, from).is_none() && quarry(&b, b.captain_of(1).unwrap(), &all, from).is_none());
+        let names = |id: SquadId| b.squads[id as usize].name.clone();
+        println!("quarry: the drakes take {} (score {:.1}), with {} fighting {}; the trolls take {}", names(got.id), score(got), names(second), names(quarry(&b, drake, &busy, from).unwrap().id), names(t.id));
     }
 
     #[test]

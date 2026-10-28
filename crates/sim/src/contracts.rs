@@ -92,11 +92,14 @@ pub mod soldier_buf {
     //   bit  25     recruit (still in own clothes)
     //   bits 26..27 rank of the squad (0..3)
     //   bit  28     engaged: in contact or shooting this tick
+    //   bit  29     backing: moving against his facing (a drake springing back plays its stride in reverse)
     // second u32 array: `strikes` counter (the view starts a strike animation when it changes)
-    // third u32 array, TICK_FIELDS per soldier: the tick he was last hit and the tick he died (NEVER if not)
+    // third u32 array, TICK_FIELDS per soldier: the tick he was last hit, the tick he died, and the tick his breath
+    // cycle began (a drake: rear, the jet at 0.4 s, the bite at 2.3 s; 04-battle.md §5) — NEVER if not
     pub const HIT_AT: usize = 0;
     pub const DIED_AT: usize = 1;
-    pub const TICK_FIELDS: usize = 2;
+    pub const BREATH_AT: usize = 2;
+    pub const TICK_FIELDS: usize = 3;
     pub const NEVER: u32 = u32::MAX;
 }
 
@@ -117,6 +120,10 @@ pub mod squad_buf {
     //   bits 14..15 rank (0..3)
     //   bits 16..23 full (men at the start, capped at 255)
     //   bits 24..31 men alive (capped at 255)
+    // second u32 array, one per squad (`squad_unit_ptr`):
+    //   bits 0..7   unit (sim::units::Unit as u8: Spear 0 … Captain 6, BlightMan 7, Troll 8, Drake 9, Broodlord 10)
+    //   bits 8..31  free
+    pub const UNIT_MASK: u32 = 0xff;
 }
 
 /// Words per event in the packed event ring (below).

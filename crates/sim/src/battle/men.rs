@@ -1,14 +1,22 @@
 //! Step 3, the soldiers (04-battle.md §3c, §5): each man picks a target, steers toward his slot or a combat point
 //! with the momentum model (SETTLE, ARRIVE, RESPONSE, separation from the neighbour grid), and collects his blow
 //! or loosens an arrow. Every man reads the positions of the tick's start; all move together in `integrate`.
+//!
+//! A breather (the drake) hunts instead (§5 "Drake breath"): it rears when its prey is within 2.4, holds ground
+//! while its jet sweeps a cone, lunges for the bite and springs back, then takes the densest spot no pack-mate
+//! has taken. Men whose company meets a drake step at most 1 tile from their slots. A blow with `impact` lands
+//! that many seconds after it starts.
 
 use super::order::Rules;
-use super::{Arrow, Battle, DT, SALT_COOLDOWN, SALT_SCATTER_X, SALT_SCATTER_Y, SALT_TARGET, SquadState, Strike};
-use crate::contracts::{EventCode, Kind, P, Tick, Way};
+use super::{Arrow, Battle, Blow, DT, SALT_COOLDOWN, SALT_SCATTER_X, SALT_SCATTER_Y, SALT_TARGET, SquadState, Strike};
+use crate::contracts::{EventCode, Kind, P, TICK_HZ, Tick, Way};
 use crate::map::path;
-use crate::math::{atan2, cos, hyp, sin, turn};
+use crate::math::{atan2, cos, hyp, sin, turn, wrap};
 use crate::rng::jitter;
 use crate::tune::Tune;
+
+/// A man's personal A* route, its goal and when to replan it; `Some` when it changed this tick.
+type Route = Option<(Vec<P>, P, Tick)>;
 
 /// What one man decided this tick, applied before the next man thinks (nothing here is read by another man's
 /// thinking, so the order of men does not matter).
@@ -20,8 +28,17 @@ struct Decision {
     engaged: bool,
     v: P,
     heading: f64,
-    route: Option<(Vec<P>, P, Tick)>,
+    route: Route,
     strikes: Vec<Strike>,
+    /// Blows started now that land later (`impact`).
+    blows: Vec<Blow>,
+    /// Breath pulses: harm to everyone in the cone, and the morale each company caught loses.
+    burns: Vec<Strike>,
+    scorch: Vec<(usize, f64)>,
+    /// A jet started this tick (the `Breath` event).
+    breath: bool,
+    /// The breath cycle's start, `Tick::MAX` when none runs.
+    cycle: Tick,
     arrow: Option<Arrow>,
     /// The foe squad he is in melee contact with, and whether he strikes it from more than 110° off its facing.
     contact: Option<(usize, bool)>,
@@ -87,12 +104,28 @@ impl Battle {
         if let Some(foe) = d.shot {
             self.scratch.shot[foe] = true;
         }
-        let struck = !d.strikes.is_empty() || d.arrow.is_some();
+        for (q, loss) in d.scorch {
+            self.scratch.scorch[q] += loss;
+            self.tally.scorch += loss;
+        }
+        let struck = !d.strikes.is_empty() || d.arrow.is_some() || !d.blows.is_empty();
+        if struck && d.cycle != Tick::MAX {
+            self.tally.bites += 1;
+        }
+        self.tally.impacts += d.blows.len() as u64;
         self.strikes.extend(d.strikes);
+        self.strikes.extend(d.burns);
+        self.blows.extend(d.blows);
         if let Some(a) = d.arrow {
             self.arrows.push(a);
         }
+        if d.breath {
+            self.tally.jets += 1;
+            let at = self.soldiers[k].pos();
+            self.event(EventCode::Breath, at, k as u32, 0);
+        }
         let m = &mut self.soldiers[k];
+        m.cycle = d.cycle;
         m.target = d.target;
         m.cooldown = d.cooldown;
         m.since_contact = d.since_contact;
@@ -169,6 +202,9 @@ impl Battle {
         let fighting = s.threat.is_some();
         let ranged = s.spec.ranged();
         let recalling = matches!(s.order, super::Order::Recall { .. });
+        if s.spec.breath > 0.0 && !routing && !commander && !recalling && (fighting || s.state == SquadState::Idle) {
+            return self.hunt(k, tune, r);
+        }
         let reach_only = commander || !fighting || r.reach_only;
         let shoots = ranged && r.fire && !reach_only;
         let range = if ranged && !reach_only { r.seek.max(s.spec.range) } else { r.seek };
@@ -236,6 +272,16 @@ impl Battle {
                 };
             }
         }
+        // Meeting a drake (§5): men step at most 1 tile from their slots; the anchor presses the block forward.
+        if !routing
+            && let Some(t) = s.threat
+            && self.squads[t as usize].spec.breath > 0.0
+        {
+            let (d, step) = (goal.dist(slot), tune.breath.meet_step);
+            if d > step {
+                goal = P::new(slot.x + (goal.x - slot.x) * step / d, slot.y + (goal.y - slot.y) * step / d);
+            }
+        }
         if let Some(sk) = r.skirmish {
             // Skirmishers step back from the nearest melee foe within reach of them.
             let mut near: Option<(f64, P)> = None;
@@ -257,6 +303,7 @@ impl Battle {
         // The blow, or the arrow.
         let mut cooldown = m.cooldown - DT;
         let mut strikes = Vec::new();
+        let mut blows = Vec::new();
         let mut arrow = None;
         let mut charge_used = false;
         let in_contact = target.is_some() && gap <= c.reach;
@@ -277,10 +324,7 @@ impl Battle {
                     && !(s.kind == Kind::Horse && foe.spec.beast);
                 charge_used = charge;
                 let dmg = base * if ranged { s.spec.melee } else { 1.0 };
-                strikes.push(Strike { attacker: k, victim: t, dmg, charge });
-                if s.spec.beast {
-                    self.cleave(k, t, dmg, tune, &mut strikes);
-                }
+                self.blow(k, t, dmg, charge, tune, &mut strikes, &mut blows);
                 cooldown = next();
             } else if shoots && foe_dist <= s.spec.range + self.height_bonus(here, self.soldiers[t].pos(), tune) {
                 let flight = (foe_dist * c.arrow_flight_k).max(c.arrow_flight_min);
@@ -305,17 +349,41 @@ impl Battle {
 
         // Steering: the momentum model.
         let to_slot = here.dist(slot);
-        let catchup = if to_slot > mv.catchup_far_at {
-            mv.catchup_far
-        } else if to_slot > mv.catchup_near_at {
-            mv.catchup_near
-        } else {
-            1.0
-        };
         let speed = man_speed
-            * catchup
+            * catchup(mv, to_slot)
             * if routing { tune.morale.rout_speed } else { 1.0 }
             * if recalling { tune.morale.recall_pace } else { 1.0 };
+        let (v, heading, route) = self.steer(k, goal, speed, None, tune);
+        Decision {
+            target,
+            cooldown,
+            charge_used,
+            since_contact,
+            engaged,
+            v,
+            heading,
+            route,
+            strikes,
+            blows,
+            burns: Vec::new(),
+            scorch: Vec::new(),
+            breath: false,
+            cycle: Tick::MAX,
+            arrow,
+            contact,
+            shot,
+        }
+    }
+
+    /// The momentum model (§3c) toward `goal` at `speed`: a personal A* route when the straight line is blocked,
+    /// the arrive term, separation from the neighbour grid, the response ease, and a beast's turn limit. With
+    /// `face`, he turns toward it at his rate and steps any way (a hunting drake keeps its eyes on its prey while it
+    /// springs back).
+    fn steer(&self, k: usize, goal: P, speed: f64, face: Option<f64>, tune: &Tune) -> (P, f64, Route) {
+        let mv = &tune.movement;
+        let m = &self.soldiers[k];
+        let s = &self.squads[m.squad as usize];
+        let here = m.pos();
         let d_goal = here.dist(goal);
         let mut route = None;
         let mut aim = goal;
@@ -379,7 +447,9 @@ impl Battle {
         let mut v = P::new(m.vx + (wx - m.vx) * ease, m.vy + (wy - m.vy) * ease);
         let mut heading = m.heading;
         let mag = hyp(v.x, v.y);
-        if mag > mv.settle {
+        if let Some(f) = face {
+            heading = if s.spec.turn > 0.0 { turn(m.heading, f, s.spec.turn * DT) } else { f };
+        } else if mag > mv.settle {
             if s.spec.turn > 0.0 {
                 heading = turn(m.heading, atan2(v.y, v.x), s.spec.turn * DT);
                 v = P::new(cos(heading) * mag, sin(heading) * mag);
@@ -387,11 +457,205 @@ impl Battle {
                 heading = atan2(v.y, v.x);
             }
         }
-        Decision { target, cooldown, charge_used, since_contact, engaged, v, heading, route, strikes, arrow, contact, shot }
+        (v, heading, route)
+    }
+
+    /// A blow starts: it lands in this tick's step 4 with a beast's cleave, or after the unit's `impact` (§5 "Myth
+    /// rules"), when the cleave is reckoned where the blow falls.
+    #[allow(clippy::too_many_arguments)]
+    fn blow(&self, k: usize, t: usize, dmg: f64, charge: bool, tune: &Tune, strikes: &mut Vec<Strike>, blows: &mut Vec<Blow>) {
+        let s = &self.squads[self.soldiers[k].squad as usize];
+        if s.spec.impact > 0.0 {
+            let lands = self.tick + ((s.spec.impact * TICK_HZ as f64).round() as Tick).max(1);
+            blows.push(Blow { attacker: k, victim: t, dmg, charge, lands });
+            return;
+        }
+        strikes.push(Strike { attacker: k, victim: t, dmg, charge, breath: false });
+        if s.spec.beast {
+            self.cleave(k, t, dmg, tune, strikes);
+        }
+    }
+
+    /// A breather's hunt (§5 "Drake breath"). The cycle, from rearing: the jet starts at 0.4 s and runs 1.2 s (a
+    /// pulse every 0.25 s harms every foe in the cone by `breath/pulses`, ignoring armour, and costs each company
+    /// caught `1.6·steadiness` morale; the cone reaches 2.3 from a root 1 tile ahead, half-angle 0.3, sweeping
+    /// ±0.3 across the pulses); the bite comes at 2.3 s; the cycle is 3.2 s. The hunt: rear when the prey is within
+    /// 2.4, hold ground while breathing, lunge at 1.6× pace 0.45 s before the bite, spring back to 2.1 still facing
+    /// the prey; the next prey is the densest spot not taken by a pack-mate.
+    fn hunt(&self, k: usize, tune: &Tune, r: &Rules) -> Decision {
+        let (mv, c, bt) = (&tune.movement, &tune.combat, &tune.breath);
+        let m = &self.soldiers[k];
+        let si = m.squad as usize;
+        let s = &self.squads[si];
+        let here = m.pos();
+        let hz = TICK_HZ as f64;
+        let fighting = s.threat.is_some();
+        let reach_only = !fighting || r.reach_only;
+        let range = r.seek.max(bt.hunt_r);
+        let running = m.cycle != Tick::MAX && ((self.tick - m.cycle) as f64) < bt.period * hz;
+        let ended = m.cycle != Tick::MAX && !running;
+
+        // The prey: kept through a cycle while he lives, and between cycles while within the hunt's reach; a cycle
+        // that has just ended takes the next prey.
+        let keep = |t: usize| {
+            let lim = if running { f64::INFINITY } else { range * c.keep_target };
+            self.may_target(k, t, tune, r, reach_only && !running, lim, false).is_some()
+        };
+        let mut prey = m.target.filter(|&t| !ended && keep(t));
+        if prey.is_none() {
+            prey = self.densest(k, tune, r, reach_only && !running, range);
+        }
+        let bulk_a = s.spec.radius - mv.base_radius;
+        let (preyp, dprey, bulks) = match prey {
+            Some(t) => {
+                let o = &self.soldiers[t];
+                let ob = self.squads[o.squad as usize].spec.radius - mv.base_radius;
+                (Some(o.pos()), here.dist(o.pos()), bulk_a + ob)
+            }
+            None => (None, f64::INFINITY, bulk_a),
+        };
+
+        // The cycle: rear when the prey comes within 2.4.
+        let mut cycle = if running { m.cycle } else { Tick::MAX };
+        if cycle == Tick::MAX && dprey <= bt.hunt_r {
+            cycle = self.tick;
+        }
+        let e = if cycle == Tick::MAX { -1.0 } else { (self.tick - cycle) as f64 };
+        // The moment `secs` into the cycle falls in this tick.
+        let at = |secs: f64| cycle != Tick::MAX && e - 1.0 < secs * hz && secs * hz <= e;
+        let secs = e / hz;
+
+        // Where he goes: his slot with no prey; toward the prey until it is within reach of the hunt; then ground
+        // held while breathing, the lunge, and the spring back.
+        let slot = self.slot(s, m.slot, s.alive as usize);
+        let man_speed = s.speed(tune);
+        let off = |p: P, dist: f64| {
+            if dprey > 1e-9 { P::new(p.x + (here.x - p.x) / dprey * dist, p.y + (here.y - p.y) / dprey * dist) } else { here }
+        };
+        let (goal, speed) = match preyp {
+            None => (slot, man_speed * catchup(mv, here.dist(slot))),
+            Some(p) if cycle == Tick::MAX => (off(p, bt.spring), man_speed * catchup(mv, here.dist(slot))),
+            Some(_) if secs < bt.bite - bt.lunge_before => (here, man_speed),
+            Some(p) if secs <= bt.bite => (off(p, c.stand * c.reach + bulks), man_speed * bt.lunge),
+            Some(p) => (off(p, bt.spring), man_speed * bt.lunge),
+        };
+        let face = preyp.map(|p| atan2(p.y - here.y, p.x - here.x));
+        let (v, heading, route) = self.steer(k, goal, speed, face, tune);
+
+        // The bite, at 2.3 s, if the prey is in reach.
+        let gap = dprey - bulks;
+        let in_contact = prey.is_some() && gap <= c.reach;
+        let (mut strikes, mut blows) = (Vec::new(), Vec::new());
+        let rank = 1.0 + tune.rank.damage * s.rank as f64;
+        if let Some(t) = prey
+            && in_contact
+            && at(bt.bite)
+        {
+            let veteran = if s.way() == Some(Way::Veteran) { c.veteran_damage } else { 1.0 };
+            self.blow(k, t, s.spec.damage * rank * veteran, false, tune, &mut strikes, &mut blows);
+        }
+
+        // The jet: the Breath event at its start, and its pulses sweeping the cone from one side to the other.
+        let (mut burns, mut scorch) = (Vec::new(), Vec::new());
+        let pulses = bt.pulses();
+        for p in 0..pulses {
+            if at(bt.rear + p as f64 * bt.pulse) {
+                let sweep = if pulses > 1 { bt.sweep * (2.0 * p as f64 / (pulses - 1) as f64 - 1.0) } else { 0.0 };
+                let root = here.offset(heading, bt.root, 0.0);
+                self.burn(k, root, heading + sweep, s.spec.breath * rank / pulses as f64, tune, &mut burns, &mut scorch);
+            }
+        }
+        let contact = if in_contact {
+            let t = &self.soldiers[prey.expect("in contact")];
+            let fi = t.squad as usize;
+            let fc = self.centre(fi);
+            let off = atan2(here.y - fc.y, here.x - fc.x);
+            Some((fi, wrap(off - self.squads[fi].facing).abs() > tune.morale.flank_angle))
+        } else {
+            None
+        };
+        Decision {
+            target: prey,
+            cooldown: (m.cooldown - DT).max(-DT),
+            charge_used: false,
+            since_contact: if in_contact { 0.0 } else { m.since_contact + DT },
+            engaged: in_contact || (cycle != Tick::MAX && prey.is_some()),
+            v,
+            heading,
+            route,
+            strikes,
+            blows,
+            burns,
+            scorch,
+            breath: at(bt.rear),
+            cycle,
+            arrow: None,
+            contact,
+            shot: prey.map(|t| self.soldiers[t].squad as usize),
+        }
+    }
+
+    /// The densest spot a pack-mate has not taken (§5 "The hunt"): among the foes man `k` may take within `range`
+    /// (only those in reach when `reach_only`), the one with the most foes within `spot_r` of him, preferring
+    /// spots no pack-mate's prey stands within `spot_r` of; then the nearest, then the lowest index.
+    fn densest(&self, k: usize, tune: &Tune, r: &Rules, reach_only: bool, range: f64) -> Option<usize> {
+        let (mv, bt) = (&tune.movement, &tune.breath);
+        let m = &self.soldiers[k];
+        let s = &self.squads[m.squad as usize];
+        let here = m.pos();
+        let look = if reach_only { tune.combat.reach + s.spec.radius - mv.base_radius + self.max_radius - mv.base_radius } else { range };
+        let mates = &self.scratch.prey[m.squad as usize];
+        let mut best: Option<(bool, u32, f64, usize)> = None;
+        self.grid.visit(here, look, |t| {
+            if self.squads[self.soldiers[t].squad as usize].team == s.team {
+                return;
+            }
+            let Some(d) = self.may_target(k, t, tune, r, reach_only, range, false) else { return };
+            let at = self.soldiers[t].pos();
+            let taken = mates.iter().any(|&(j, p)| j != k && p.dist(at) <= bt.spot_r);
+            let mut dense = 0u32;
+            self.grid.visit(at, bt.spot_r, |j| {
+                let o = &self.soldiers[j];
+                if self.squads[o.squad as usize].team != s.team && o.pos().dist(at) <= bt.spot_r {
+                    dense += 1;
+                }
+            });
+            let better = best.is_none_or(|(bt_, bn, bd, bi)| {
+                (taken, std::cmp::Reverse(dense)).cmp(&(bt_, std::cmp::Reverse(bn))).then(d.total_cmp(&bd)).then(t.cmp(&bi)).is_lt()
+            });
+            if better {
+                best = Some((taken, dense, d, t));
+            }
+        });
+        best.map(|(_, _, _, t)| t)
+    }
+
+    /// One breath pulse: every foe in the cone from `root` along `axis` (reach 2.3 to his body's edge, half-angle
+    /// 0.3) takes `dmg`; each company caught loses `1.6·steadiness` morale. No friendly fire.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn burn(&self, k: usize, root: P, axis: f64, dmg: f64, tune: &Tune, out: &mut Vec<Strike>, scorch: &mut Vec<(usize, f64)>) {
+        let (mv, bt) = (&tune.movement, &tune.breath);
+        let team = self.squads[self.soldiers[k].squad as usize].team;
+        self.grid.visit(root, bt.reach + self.max_radius, |j| {
+            let o = &self.soldiers[j];
+            let os = &self.squads[o.squad as usize];
+            if os.team == team || !os.on_field() {
+                return;
+            }
+            let (dx, dy) = (o.x - root.x, o.y - root.y);
+            let d = hyp(dx, dy);
+            if d - (os.spec.radius - mv.base_radius) > bt.reach || (d > 1e-9 && wrap(atan2(dy, dx) - axis).abs() > bt.half_angle) {
+                return;
+            }
+            out.push(Strike { attacker: k, victim: j, dmg, charge: false, breath: true });
+            if !scorch.iter().any(|&(q, _)| q == o.squad as usize) {
+                scorch.push((o.squad as usize, bt.morale * os.spec.steadiness));
+            }
+        });
     }
 
     /// §5 "Beasts": each blow also hits the 3 nearest other foes within 1.5 at 0.6 share.
-    fn cleave(&self, k: usize, victim: usize, dmg: f64, tune: &Tune, out: &mut Vec<Strike>) {
+    pub(super) fn cleave(&self, k: usize, victim: usize, dmg: f64, tune: &Tune, out: &mut Vec<Strike>) {
         let b = &tune.beast;
         let here = self.soldiers[k].pos();
         let team = self.squads[self.soldiers[k].squad as usize].team;
@@ -405,7 +669,7 @@ impl Battle {
         });
         near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         for &(_, j) in near.iter().take(b.cleave_n) {
-            out.push(Strike { attacker: k, victim: j, dmg: dmg * b.cleave_share, charge: false });
+            out.push(Strike { attacker: k, victim: j, dmg: dmg * b.cleave_share, charge: false, breath: false });
         }
     }
 
@@ -426,5 +690,16 @@ impl Battle {
         m.pace += (actual - m.pace) * rate;
         m.x = x;
         m.y = y;
+    }
+}
+
+/// A man more than 1 tile from his slot jogs at ×1.4, more than 0.5 at ×1.15 (§3c "Speed").
+fn catchup(mv: &crate::tune::MoveTune, to_slot: f64) -> f64 {
+    if to_slot > mv.catchup_far_at {
+        mv.catchup_far
+    } else if to_slot > mv.catchup_near_at {
+        mv.catchup_near
+    } else {
+        1.0
     }
 }

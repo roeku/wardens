@@ -2,11 +2,12 @@
 //! contact, the fog, the outcome, the bots and the armies. Kept separate so the frame packing does not depend on
 //! how the rules name things.
 
-use sim::battle::{Battle, Company, Setup};
+use sim::battle::{Battle, Company, Setup, Squad};
 use sim::bots::{Bot, BotKind};
 use sim::contracts::{Command, Kind, Team, Tick};
 use sim::map::{MapKind, MapOpts};
 use sim::tune::Tune;
+use sim::units::Unit;
 
 /// The soldier's last hit and death ticks (`Tick::MAX` when never; not alive and never died = left the field).
 pub fn hit_and_death(b: &Battle, k: usize) -> (Tick, Tick) {
@@ -17,6 +18,22 @@ pub fn hit_and_death(b: &Battle, k: usize) -> (Tick, Tick) {
 /// The foe the man strikes or shoots at (a soldier index), if the sim gives one.
 pub fn target(b: &Battle, k: usize) -> Option<usize> {
     b.soldiers[k].target
+}
+
+/// The squad's unit id (sim::units::Unit: Spear 0 … Captain 6, BlightMan 7, Troll 8, Drake 9, Broodlord 10), for the
+/// view's looks (contracts `squad_buf`, the second u32).
+pub fn unit(s: &Squad) -> u8 {
+    s.unit.id()
+}
+
+/// The company breathes fire (drakes): a breathing beast faces its prey (04-battle.md §9 "Facing", priority 1).
+pub fn breathes(s: &Squad) -> bool {
+    s.spec.breath > 0.0
+}
+
+/// The tick the man's breath cycle began (rear, jet at 0.4 s, bite at 2.3 s; 04-battle.md §5), `Tick::MAX` when none.
+pub fn breath_cycle(b: &Battle, k: usize) -> Tick {
+    b.soldiers[k].cycle
 }
 
 /// The man is in contact or shooting this tick.
@@ -42,7 +59,8 @@ pub fn day_s(b: &Battle) -> f64 {
 }
 
 /// A battle from a seed, map options and a named army: `default` is what the map kind opens with
-/// (`Setup::for_map`); `big` is nine companies a side (01-flow.md §5 `?army=big`).
+/// (`Setup::for_map`: the blight and its broodlord); `big` is nine companies a side (01-flow.md §5 `?army=big`): our
+/// nine against nine of the blight's (five of blight-men, two troll companies, two drake packs) and the broodlord.
 pub fn muster(seed: u32, opts: MapOpts, army: &str) -> Result<Battle, String> {
     let base = Setup::for_map(opts.kind);
     let setup = match army {
@@ -60,16 +78,11 @@ pub fn muster(seed: u32, opts: MapOpts, army: &str) -> Result<Battle, String> {
                 (Kind::Horse, "GARETH"),
             ];
             let warband = ours.iter().map(|&(k, n)| Company::new(k, n)).collect();
-            // the open field mirrors our army with named companies; a held place has a garrison without commanders
-            let garrison = if opts.kind == MapKind::Field {
-                let theirs = ["GRIM", "MAUL", "ROOK", "FANG", "VEX", "SKARN", "DREG", "HOLT", "BRAK"];
-                ours.iter().zip(theirs).map(|(&(k, _), n)| Company::new(k, n)).collect()
-            } else {
-                [Kind::Levy, Kind::Levy, Kind::Spear, Kind::Levy, Kind::Levy, Kind::Spear, Kind::Levy, Kind::Archer, Kind::Archer]
-                    .into_iter()
-                    .map(|k| Company::new(k, ""))
-                    .collect()
-            };
+            // the blight's companies have no commanders of their own: the broodlord (the base's general) leads them
+            let garrison = [Unit::BlightMan, Unit::BlightMan, Unit::Troll, Unit::BlightMan, Unit::Drake, Unit::BlightMan, Unit::Troll, Unit::BlightMan, Unit::Drake]
+                .into_iter()
+                .map(|u| Company::of(u, ""))
+                .collect();
             Setup { warband, garrison, ..base }
         }
         _ => return Err(format!("no army {army} (default | big)")),

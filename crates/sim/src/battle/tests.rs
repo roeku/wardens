@@ -2,11 +2,17 @@
 
 use super::*;
 use crate::bots::{Bot, BotKind};
+use crate::units::Unit;
 use crate::contracts::{Deed, Source, Who};
 use crate::map::MapKind;
 
 fn field() -> Battle {
     Battle::new(7, MapOpts { kind: MapKind::Field, width: 48 }, &Setup::field(), Tune::default())
+}
+
+/// The symmetric human field of day 3 (`Setup::mirror`).
+fn mirror() -> Battle {
+    Battle::new(7, MapOpts { kind: MapKind::Field, width: 48 }, &Setup::mirror(), Tune::default())
 }
 
 fn keep() -> Battle {
@@ -160,7 +166,7 @@ fn pending_orders_run_on_completion_on_a_signal_and_on_a_condition() {
 
 #[test]
 fn shapes_and_priorities_are_modifiers() {
-    let mut b = field();
+    let mut b = mirror();
     let wil = named(&b, "WIL");
     let n = b.squads[wil].alive as usize;
     let block: Vec<P> = (1..n as u16).map(|k| b.slot(&b.squads[wil], k, n)).collect();
@@ -198,4 +204,244 @@ fn a_bot_battle_on_the_field_ends() {
     assert!(hits > 0);
     let dead = b.soldiers.iter().filter(|m| m.died_at != Tick::MAX).count();
     println!("bot battle: team {winner} wins ({}) at {:.1} s after {hits} hits, {dead} dead", why.name(), b.time());
+}
+
+/// One company of ours (squad 1; our captain, squad 0, stands far back) against one of theirs (squad 2) on the
+/// open field, 7 tiles apart and facing each other.
+fn duel(ours: Unit, theirs: Unit, tune: Tune) -> Battle {
+    let setup = Setup { warband: vec![Company::of(ours, "")], garrison: vec![Company::of(theirs, "")], general: None, mirror: false };
+    let mut b = Battle::new(7, MapOpts { kind: MapKind::Field, width: 48 }, &setup, tune);
+    let (a, z) = (P::new(20.0, 13.5), P::new(27.0, 13.5));
+    for (i, at, face) in [(0usize, P::new(5.0, 13.5), 0.0), (1, a, 0.0), (2, z, std::f64::consts::PI)] {
+        let s = &mut b.squads[i];
+        (s.x, s.y, s.facing, s.post) = (at.x, at.y, face, at);
+        s.order = Order::Hold { face: Some(face) };
+        s.detached = true;
+        let n = s.alive as usize;
+        let men = s.soldiers.clone();
+        for k in men {
+            let p = b.slot(&b.squads[i], b.soldiers[k].slot, n);
+            (b.soldiers[k].x, b.soldiers[k].y, b.soldiers[k].heading) = (p.x, p.y, face);
+        }
+    }
+    b.rebucket();
+    b.measure();
+    b.update_sight();
+    b
+}
+
+/// Our company never breaks (no morale lost to deaths or breath, and it never routs), so a hunt runs its course.
+fn unbreakable(kind: &str) -> Tune {
+    Tune::with_override(&serde_json::json!({"kinds": {kind: {"steadiness": 0.0}}, "morale": {"rout_below": -1.0e9}})).unwrap()
+}
+
+#[test]
+fn the_blight_takes_the_field_and_the_nest() {
+    let ids = |b: &Battle, team: Team| -> Vec<(Unit, Kind)> { b.squads.iter().filter(|s| s.team == team).map(|s| (s.unit, s.kind)).collect() };
+    let f = field();
+    let theirs = ids(&f, 1);
+    assert_eq!(theirs[0], (Unit::Broodlord, Kind::Captain), "the broodlord leads the army as its captain");
+    let units: Vec<Unit> = theirs.iter().map(|x| x.0).collect();
+    assert_eq!(units, [Unit::Broodlord, Unit::BlightMan, Unit::BlightMan, Unit::BlightMan, Unit::Troll, Unit::Drake]);
+    assert!(f.squads.iter().all(|s| s.unit != Unit::Captain || s.team == 0), "no human general");
+    let k = keep();
+    let nest: Vec<Unit> = ids(&k, 1).iter().map(|x| x.0).collect();
+    assert_eq!(*nest.last().unwrap(), Unit::Broodlord, "at the keep the broodlord comes last, after the posts");
+    assert_eq!(nest.iter().filter(|&&u| u == Unit::Drake).count(), 2);
+    let m = mirror();
+    assert!(m.squads.iter().any(|s| s.name == "GRIM") && m.squads.iter().all(|s| s.unit != Unit::Broodlord), "the human mirror stays");
+    for b in [&f, &k, &m] {
+        for s in &b.squads {
+            assert_eq!(s.kind, b.tune.unit_kind(s.unit));
+            assert_eq!(s.spec, b.tune.unit_spec(s.unit).unwrap());
+        }
+    }
+    println!("setups: field {:?}; nest {} companies; mirror {} squads", units, nest.len() - 1, m.squads.len());
+}
+
+#[test]
+fn a_pack_spreads_its_files_and_pulls_its_ends_back() {
+    let b = field();
+    let pk = b.tune.pack.clone();
+    let d = b.squads.iter().position(|s| s.unit == Unit::Drake).unwrap();
+    let s = &b.squads[d];
+    let n = s.alive as usize;
+    let anchor = P::new(s.x, s.y);
+    // Along and across the facing: (back, lateral) of each slot.
+    let f = P::from_angle(s.facing);
+    let at: Vec<(f64, f64)> = (0..n as u16)
+        .map(|k| {
+            let p = b.slot(s, k, n);
+            let (dx, dy) = (p.x - anchor.x, p.y - anchor.y);
+            (-(dx * f.x + dy * f.y), dx * f.y - dy * f.x)
+        })
+        .collect();
+    let gap = b.tune.movement.file_gap * s.spec.radius / b.tune.movement.base_radius;
+    // Three drakes in one rank: the ends stand back by 0.5 (± the jitter), the files 1.15× apart.
+    let mid = at[1].0;
+    for e in [at[0].0, at[2].0] {
+        assert!((e - mid - pk.ends_back).abs() <= 2.0 * pk.jitter + 1e-9, "ends back {e:.3} vs {mid:.3}");
+    }
+    let spread = (at[2].1 - at[0].1).abs();
+    assert!((spread - 2.0 * gap * pk.files).abs() <= 2.0 * pk.jitter + 1e-9, "files {spread:.3}");
+    println!("pack: ends {:.2}/{:.2} behind the middle drake, outer files {spread:.2} apart (plain {:.2})", at[0].0 - mid, at[2].0 - mid, 2.0 * gap);
+}
+
+#[test]
+fn a_drake_rears_breathes_bites_and_springs_back() {
+    let mut b = duel(Unit::Spear, Unit::Drake, unbreakable("spear"));
+    order(&mut b, 1, Deed::Attack { who: Who::Squad { id: 2 }, target: 1, via: Vec::new() });
+    let bt = b.tune.breath.clone();
+    let drakes: Vec<usize> = b.squads[2].soldiers.clone();
+    let hz = TICK_HZ as f64;
+    let (mut rears, mut rear_d, mut jets, mut jet_late, mut bites, mut late_bites) = (0, 0.0f64, 0, 0, 0, 0);
+    let (mut spring, mut springs, mut held, mut held_moved) = (0.0f64, 0, 0, 0.0f64);
+    let mut cycles: Vec<Tick> = vec![Tick::MAX; drakes.len()];
+    let mut strikes: Vec<u32> = drakes.iter().map(|&k| b.soldiers[k].strikes).collect();
+    let mut was: Vec<P> = drakes.iter().map(|&k| b.soldiers[k].pos()).collect();
+    for _ in 0..(40 * 30) {
+        b.step(1);
+        for e in b.drain_events() {
+            if e.code == EventCode::Breath {
+                jets += 1;
+                if (e.tick - b.soldiers[e.a as usize].cycle) as f64 != (bt.rear * hz).round() {
+                    jet_late += 1;
+                }
+            }
+        }
+        for (j, &k) in drakes.iter().enumerate() {
+            let m = &b.soldiers[k];
+            let e = if m.cycle == Tick::MAX { -1.0 } else { (b.tick - 1 - m.cycle) as f64 };
+            if m.cycle != cycles[j] && m.cycle != Tick::MAX {
+                rears += 1;
+                if let Some(t) = m.target {
+                    rear_d = rear_d.max(was[j].dist(b.soldiers[t].pos()));
+                }
+            }
+            cycles[j] = m.cycle;
+            if m.strikes != strikes[j] {
+                bites += 1;
+                late_bites += (e != (bt.bite * hz).round()) as u32;
+                strikes[j] = m.strikes;
+            }
+            // Ground is held while breathing: from the rear to the lunge he barely moves.
+            if e > 0.0 && e < ((bt.bite - bt.lunge_before) * hz).floor() {
+                held += 1;
+                held_moved += m.pos().dist(was[j]);
+            }
+            // The cycle's last tick: he has sprung back toward 2.1 of his prey.
+            if e == (bt.period * hz).round() - 1.0
+                && let Some(t) = m.target
+            {
+                spring += m.pos().dist(b.soldiers[t].pos());
+                springs += 1;
+            }
+            was[j] = m.pos();
+        }
+        if b.squads[1].alive == 0 || b.squads[2].alive == 0 {
+            break;
+        }
+    }
+    let t = b.tally.clone();
+    let spring = spring / springs.max(1) as f64;
+    let held = held_moved / held.max(1) as f64 * hz;
+    println!(
+        "drake hunt: {rears} rears (prey at most {rear_d:.2} away), {jets} jets ({jet_late} off 0.4 s), {} burns ({:.1} harm, {} killed), {:.1} morale scorched, {bites} bites ({late_bites} off 2.3 s), held ground at {held:.2} t/s, sprang back to {spring:.2} ({springs} cycles); spears {} drakes {} left",
+        t.burns, t.burn_harm, t.burn_kills, t.scorch, b.squads[1].alive, b.squads[2].alive
+    );
+    assert!(rears > 0 && jets > 0 && t.burns > 0 && bites > 0 && springs > 0);
+    assert_eq!(jet_late, 0, "every jet starts 0.4 s after the rear");
+    assert_eq!(late_bites, 0, "every bite comes 2.3 s into the cycle");
+    assert!(rear_d <= bt.hunt_r + 0.15, "a drake rears only with its prey within 2.4: {rear_d:.2}");
+    assert!(t.burns <= jets as u64 * bt.pulses() as u64 * 12, "pulses are bounded");
+    assert!(held < 0.6, "ground held while breathing: {held:.2} t/s");
+    assert!(spring > 1.6, "springs back toward 2.1: {spring:.2}");
+}
+
+#[test]
+fn breath_harms_only_foes_in_the_cone() {
+    let mut b = duel(Unit::Spear, Unit::Drake, Tune::default());
+    let bt = b.tune.breath.clone();
+    let drake = b.squads[2].soldiers[0];
+    let at = b.soldiers[drake].pos();
+    let face = std::f64::consts::PI;
+    let root = at.offset(face, bt.root, 0.0);
+    // A foe on the axis, a foe off to the side, a pack-mate on the axis.
+    let (foe, side) = (b.squads[1].soldiers[1], b.squads[1].soldiers[2]);
+    let mate = b.squads[2].soldiers[1];
+    for (k, p) in [(foe, root.offset(face, 1.5, 0.0)), (side, root.offset(face, 1.0, 1.2)), (mate, root.offset(face, 0.8, 0.0))] {
+        (b.soldiers[k].x, b.soldiers[k].y) = (p.x, p.y);
+    }
+    b.rebucket();
+    let tune = b.tune.clone();
+    let (mut out, mut scorch) = (Vec::new(), Vec::new());
+    b.burn(drake, root, face, 1.2, &tune, &mut out, &mut scorch);
+    let hit: Vec<usize> = out.iter().map(|s| s.victim).collect();
+    assert!(hit.contains(&foe) && !hit.contains(&side) && !hit.contains(&mate), "{hit:?}");
+    assert_eq!(scorch, vec![(1, bt.morale * b.squads[1].spec.steadiness)], "one company caught, 1.6·steadiness");
+    assert!(out.iter().all(|s| s.breath && s.dmg == 1.2));
+    println!("breath: {} hit in the cone, the man 1.2 off its axis and the pack-mate spared; scorch {scorch:?}", hit.len());
+}
+
+#[test]
+fn a_company_meeting_drakes_holds_its_slots_and_presses_forward() {
+    let mut b = duel(Unit::Spear, Unit::Drake, unbreakable("spear"));
+    order(&mut b, 1, Deed::Attack { who: Who::Squad { id: 2 }, target: 1, via: Vec::new() });
+    let start = P::new(b.squads[1].x, b.squads[1].y);
+    let (mut worst, mut ticks) = (0.0f64, 0);
+    for _ in 0..(20 * 30) {
+        b.step(1);
+        if b.squads[1].threat.is_some_and(|t| b.squads[t as usize].spec.breath > 0.0) {
+            ticks += 1;
+            worst = worst.max(b.looseness(1));
+        }
+    }
+    let pressed = P::new(b.squads[1].x, b.squads[1].y).dist(start);
+    println!("meeting drakes: {ticks} ticks engaged, looseness at most {worst:.2}, {} press ticks, anchor moved {pressed:.2}", b.tally.presses);
+    assert!(ticks > 0 && b.tally.presses > 0 && pressed > 0.5);
+    assert!(worst < 1.2, "men stay within about a tile of their slots: {worst:.2}");
+}
+
+#[test]
+fn a_troll_blow_lands_after_its_impact() {
+    let mut b = duel(Unit::Spear, Unit::Troll, unbreakable("spear"));
+    order(&mut b, 1, Deed::Attack { who: Who::Squad { id: 2 }, target: 1, via: Vec::new() });
+    let lag = (b.tune.unit_spec(Unit::Troll).unwrap().impact * TICK_HZ as f64).round() as Tick;
+    let (mut started, mut on_time, mut pending_max) = (0, 0, 0usize);
+    let mut seen: Vec<(usize, Tick)> = Vec::new();
+    for _ in 0..(30 * 30) {
+        b.step(1);
+        pending_max = pending_max.max(b.blows.len());
+        for w in &b.blows {
+            if !seen.contains(&(w.attacker, w.lands)) {
+                seen.push((w.attacker, w.lands));
+                started += 1;
+                // Started this tick (stamped before the tick advanced), landing `impact` later.
+                on_time += (w.lands == b.tick - 1 + lag) as u32;
+            }
+        }
+    }
+    let t = b.tally.clone();
+    println!("impact: {started} troll blows started ({on_time} timed {lag} ticks ahead), {} landed, {} missed, at most {pending_max} pending", t.landed, t.missed);
+    assert!(started > 0 && on_time == started);
+    assert_eq!(t.impacts, t.landed + t.missed + b.blows.len() as u64, "every blow lands or misses");
+    assert!(t.landed > 0);
+}
+
+#[test]
+fn the_broodlord_falling_costs_his_host_and_the_battle() {
+    let mut b = field();
+    let lord = b.captain_of(1).unwrap();
+    assert_eq!(b.squads[lord].unit, Unit::Broodlord);
+    let before: Vec<f64> = b.squads.iter().map(|s| s.morale).collect();
+    let man = b.squads[lord].soldiers[0];
+    b.kill(man, None);
+    b.cull();
+    let codes: Vec<EventCode> = b.events.iter().map(|e| e.code).collect();
+    assert!(codes.contains(&EventCode::FoeCommanderFall) && codes.contains(&EventCode::BannerFall));
+    let lost: Vec<f64> = b.squads.iter().zip(&before).filter(|(s, _)| s.team == 1 && s.kind != Kind::Captain).map(|(s, m)| m - s.morale).collect();
+    assert!(lost.iter().all(|&l| l == b.tune.morale.foe_commander_fell), "{lost:?}");
+    b.step(1);
+    assert_eq!(b.outcome(), Some((0, OutcomeReason::CaptainFell)));
+    println!("broodlord falls: {} companies lose 25, team 0 wins ({:?})", lost.len(), b.outcome());
 }

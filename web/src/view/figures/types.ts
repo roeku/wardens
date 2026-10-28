@@ -1,4 +1,4 @@
-import type { Kind, Team } from '../../contracts';
+import type { Kind, Team, Unit } from '../../contracts';
 
 // The records the game hands the figure layer each frame (day 3 fills them from the sim's soldier and squad
 // buffers). Plain data: the figure layer never imports the sim and never writes back.
@@ -17,6 +17,8 @@ export interface ManRecord {
   /** The sim's speed, tiles/s. Over 0.2 he walks. */
   speed: number;
   kind: Kind;
+  /** Who he is: the blight's units are drawn as beasts (blight-man, troll, drake, broodlord), never as soldiers. */
+  unit: Unit;
   team: Team;
   /** 0..3. */
   rank: number;
@@ -39,6 +41,10 @@ export interface ManRecord {
   /** What he strikes or shoots at, in sim tiles: archers draw toward it, a standing man turns to it. */
   aimX?: number;
   aimY?: number;
+  /** A drake: seconds since its last breath jet began (the sim's `Breath` event; Infinity if never). */
+  breathAge?: number;
+  /** Walking against his facing (a drake springing back): the stride plays in reverse (04-battle.md §9). */
+  backing?: boolean;
 }
 
 /** One company's banner. */
@@ -62,6 +68,8 @@ export interface BannerRecord {
   /** Battles survived: one honour ribbon each. */
   honours: number;
   kind: Kind;
+  /** The blight's companies carry its standards (a ragged hide on a crooked pole under a horned skull). */
+  unit: Unit;
   team: Team;
   /** The freed villages' plain linen banner. */
   linen?: boolean;

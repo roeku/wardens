@@ -12,7 +12,7 @@ export function fixed(hex: number): Paint {
   return [r, g, b, 0];
 }
 
-type V3 = readonly [number, number, number];
+export type V3 = readonly [number, number, number];
 
 /**
  * Accumulates triangles. `s` is the cloth parameter (0 at the attach line, 1 at the hem or fly), `axis` the
@@ -366,4 +366,53 @@ export function slab(b: Builder, shape: readonly (readonly [number, number])[], 
     const b0 = b.vertex(x0, yb, zb, 0, ny, nz);
     b.quad(a0, b0, b1, a1);
   }
+}
+
+/**
+ * `tube`: a tapering limb along a polyline (horns, antlers, tails, crooked poles), radius r0 at the first point to
+ * r1 at the last, with a ball at each bend so it doesn't split; `tip` ends it in a point.
+ */
+export function tube(b: Builder, pts: readonly V3[], r0: number, r1: number, seg = 5, tip = false): void {
+  const n = pts.length - 1;
+  for (let i = 0; i < n; i++) {
+    const ra = r0 + ((r1 - r0) * i) / n;
+    const rb = r0 + ((r1 - r0) * (i + 1)) / n;
+    if (tip && i === n - 1) cone(b, pts[i], pts[i + 1], ra, seg);
+    else rod(b, pts[i], pts[i + 1], ra, seg, rb, i === 0);
+    if (i > 0) {
+      const keep = b.axisAt;
+      const c = pts[i];
+      if (!keep) b.axisAt = () => c;
+      ball(b, { c, r: [ra, ra, ra], seg, rings: 2 });
+      b.axisAt = keep;
+    }
+  }
+}
+
+/**
+ * `rags`: a ragged skirt of hide strips round the hips, hanging from y0 (radius r0) with each strip its own
+ * length (`lens`, one per strip round from the front), flaring to r1; the inside in `inner`.
+ */
+export function rags(b: Builder, o: { r0: number; r1: number; y0: number; lens: readonly number[]; sx?: number; inner: Paint }): void {
+  const n = o.lens.length;
+  const sx = o.sx ?? 1;
+  const keep = b.paint;
+  for (const inside of [false, true]) {
+    b.paint = inside ? o.inner : keep;
+    for (let i = 0; i < n; i++) {
+      const a0 = (Math.PI * 2 * i) / n, a1 = (Math.PI * 2 * (i + 1)) / n;
+      const len = o.lens[i];
+      const flare = o.r0 + (o.r1 - o.r0) * Math.min(1, len / 0.1);
+      const p = (a: number, r: number, y: number) => {
+        const c = Math.cos(a), s = Math.sin(a), k = inside ? -1 : 1;
+        return b.vertex(c * r * sx, y, s * r, (k * c) / sx, 0.2 * k, k * s);
+      };
+      const t0 = p(a0, o.r0, o.y0), t1 = p(a1, o.r0, o.y0);
+      const b0 = p(a0, flare, o.y0 - len), b1 = p(a1, flare, o.y0 - len);
+      // `round`'s winding (bottom i, top i, top j, bottom j) faces out
+      if (inside) b.quad(t0, b0, b1, t1);
+      else b.quad(b0, t0, t1, b1);
+    }
+  }
+  b.paint = keep;
 }

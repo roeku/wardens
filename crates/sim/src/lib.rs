@@ -11,6 +11,7 @@ pub mod math;
 pub mod rng;
 pub mod text;
 pub mod tune;
+pub mod units;
 
 /// Shown by the harness and logged by the browser's WASM smoke test.
 pub const VERSION: &str = concat!("wardens-sim ", env!("CARGO_PKG_VERSION"));

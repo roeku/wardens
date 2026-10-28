@@ -4,7 +4,7 @@ import { tatterStage, type BannerAtlas, type ShieldAtlas } from './atlas';
 import { hash32 } from './hash';
 import type { PartPool } from './instances';
 import { alongDown, frame, ident, m4, mul, point, rotX, rotY, rotZ, scale, translate, type M4 } from './mat';
-import { type Look } from './outfit';
+import { type Form, type Look } from './outfit';
 import { RIBBONS, rgb } from './palette';
 import { BANNER, BODY, HORSE, PARTS, type PartDef, type PartId } from './parts';
 import { snapFigure, type Snapped } from './snap';
@@ -22,10 +22,10 @@ const STRIDE_MOUNTED = 2.4;
 const TURN = 7;
 const EASE = 16;
 const SPEED_LP = 10;
-const WALK_MIN = 0.2;
+export const WALK_MIN = 0.2;
 const FACE_MOTION = 0.35;
-const HIT_FLASH = 0.1;
-const TOPPLE = 0.35;
+export const HIT_FLASH = 0.1;
+export const TOPPLE = 0.35;
 const SWORD_T = 0.3;
 const SPEAR_T = 0.5;
 /** A thin thing is at least this many art pixels across. */
@@ -46,7 +46,7 @@ const SWORD_KEYS: readonly (readonly [number, number, number, number])[] = [
   [1, ...GUARD],
 ];
 
-const smooth = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+export const smooth = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 
 function swordArm(t: number, out: number[]): void {
   const k = t / SWORD_T;
@@ -95,8 +95,9 @@ export interface RigCtx {
 }
 
 /**
- * The extension point for other bodies. Men (on foot and mounted) are built in; beasts (drakes, trolls…)
- * register a rig for their kind with `registerRig('beast', …)` and are skipped until one exists.
+ * The extension point for other bodies. Men (on foot and mounted) are built in; the blight's bodies (blight-men,
+ * trolls, drakes, the broodlord) register a rig for their form (blight.ts), and any other beast for its kind with
+ * `registerRig('beast', …)`. A body without a rig is skipped.
  */
 export interface Rig {
   pose(ctx: RigCtx, st: FigState, rec: ManRecord): void;
@@ -104,9 +105,9 @@ export interface Rig {
   stride?: number;
   turn?: number;
 }
-export const RIGS: Partial<Record<Kind, Rig>> = {};
-export function registerRig(kind: Kind, rig: Rig): void {
-  RIGS[kind] = rig;
+export const RIGS: Partial<Record<Kind | Exclude<Form, 'man'>, Rig>> = {};
+export function registerRig(key: Kind | Exclude<Form, 'man'>, rig: Rig): void {
+  RIGS[key] = rig;
 }
 
 // ---------------------------------------------------------------------------------------------------------- state
@@ -129,7 +130,8 @@ export function advance(st: FigState, rec: ManRecord, dt: number, rig?: Rig): vo
     const cap = (rig?.turn ?? TURN) * dt;
     st.face += Math.max(-cap, Math.min(cap, d));
     const stride = rig?.stride ?? (st.look.mounted ? STRIDE_MOUNTED : STRIDE_FOOT);
-    st.phase += st.speed * dt * stride;
+    // walking against his facing (a drake springing back) plays the stride in reverse (04-battle.md §9)
+    st.phase += (rec.backing ? -1 : 1) * st.speed * dt * stride;
   }
   if (rec.strikes !== st.strikes) {
     st.strikes = rec.strikes;
@@ -154,7 +156,7 @@ function dyeRGB(hex: number): [number, number, number] {
  * Writes one part: world = root · local. `dye` null = a fixed-colour part (white instance colour). Cloth parts
  * take (wind, phase, length); thin parts get their swell from the zoom and `tilesPerUnit` (tiles per local unit).
  */
-function emit(c: RigCtx, id: PartId, root: M4, local: M4, dye: number | null, flash: boolean, tilesPerUnit: number, wind = 0, phase = 0, len = 0, tile?: ArrayLike<number>): void {
+export function emit(c: RigCtx, id: PartId, root: M4, local: M4, dye: number | null, flash: boolean, tilesPerUnit: number, wind = 0, phase = 0, len = 0, tile?: ArrayLike<number>): void {
   mul(W, root, local);
   const def = PARTS[id] as PartDef;
   const [r, g, b] = dye === null || flash ? WHITE : dyeRGB(dye);
@@ -166,7 +168,7 @@ function emit(c: RigCtx, id: PartId, root: M4, local: M4, dye: number | null, fl
   } else c.pool.add(id, W, AT, r, g, b, 1, 0, 0, 0, tile);
 }
 /** The snapped root of the figure being posed: matrices are relative to it (see material.ts, PROJECT). */
-const AT = new Float64Array(3);
+export const AT = new Float64Array(3);
 const WHITE: [number, number, number] = [1, 1, 1];
 
 // ---------------------------------------------------------------------------------------------------------- men
@@ -749,6 +751,40 @@ function stringBetweenPart(c: RigCtx, id: PartId, a: number[], b: number[], flas
 
 const BROOT = m4();
 const BTILE = new Float32Array(4);
+const CW = m4();
+const CP = [0, 0, 0];
+const SQ = Math.SQRT1_2;
+const COS30 = Math.sqrt(3) / 2;
+
+/**
+ * Puts a banner's cloth card (`local`, in `root`'s frame, root scale `k`) on whole art pixels per texel: the far
+ * 12×20 gonfalon at exactly 12 px wide, the near 16×26 at 16 px, or (from 20 px) the near one at its own width; and,
+ * while it hangs straight, its top-left corner on a whole pixel, so every pixel centre samples a texel's centre.
+ * Returns whether the far gonfalon is drawn and the scale given to the cloth (out/decisions-blight-view.md "Banner
+ * cloth on whole texels").
+ */
+export function fitCloth(c: RigCtx, root: M4, local: M4, k: number, straight: boolean): { far: boolean; s: number } {
+  const want = c.zoom * k * BANNER.clothW;
+  const far = want < 14;
+  const s = far ? 12 / want : want < 20 ? 16 / want : 1;
+  scale(local, s, s, 1);
+  if (straight && s !== 1) {
+    // the corner's offset from the root's pixel, in art px along the screen's right and up (material.ts FIG_RIGHT/UP)
+    mul(CW, root, local);
+    point(CP, CW, -BANNER.clothW / 2, 0, 0);
+    const ox = (CP[0] + CP[2]) * SQ * c.zoom;
+    const oy = ((CP[0] - CP[2]) * SQ * 0.5 + CP[1] * COS30) * c.zoom;
+    const dx = (Math.round(ox) - ox) / c.zoom;
+    const dy = (Math.round(oy) - oy) / (c.zoom * COS30);
+    // that shift in the world (along the screen's right, and straight up), into the root's frame (rotation × k)
+    const vx = dx * SQ, vy = dy, vz = dx * SQ;
+    const k2 = k * k;
+    local[12] += (root[0] * vx + root[1] * vy + root[2] * vz) / k2;
+    local[13] += (root[4] * vx + root[5] * vy + root[6] * vz) / k2;
+    local[14] += (root[8] * vx + root[9] * vy + root[10] * vz) / k2;
+  }
+  return { far, s };
+}
 const BSNAP: Snapped = { x: 0, y: 0, z: 0, px: 0, py: 0 };
 const PITCH = Math.PI / 6;
 /** Most the pole leans when heart is low (radians). */
@@ -808,18 +844,18 @@ export function poseBanner(c: RigCtx, b: BannerRecord): void {
     captain,
     variant: hash32(b.id, 3, 0xba22),
   };
-  // the near 16×26 gonfalon once it would be drawn at least a pixel per texel, else the far 12×20 one
-  const far = c.zoom * k * BANNER.clothW < 16;
-  c.banners.get(look, far, BTILE);
   const unfurl = Math.max(0.05, Math.min(1, b.unfurl ?? 1));
   // the card turns square to the camera (its foot toward the viewer), so the gonfalon's texels are not
-  // foreshortened by the 30° pitch
+  // foreshortened by the 30° pitch; it is drawn on whole pixels per texel, the far 12×20 gonfalon or the near 16×26
   ident(TMP);
   translate(TMP, 0, barY - 0.01, BANNER.push);
   rotX(TMP, -PITCH);
   scale(TMP, 1, unfurl, 1);
+  const fit = fitCloth(c, BROOT, TMP, k, lean === 0 && unfurl === 1);
+  const far = fit.far;
+  c.banners.get(look, far, BTILE);
   const wind = Math.min(1, b.speed / 1.6);
-  emit(c, far ? 'bannerClothFar' : 'bannerCloth', BROOT, TMP, null, false, k, wind, (b.id % 89) / 14, far ? BANNER.clothHFar : BANNER.clothH, BTILE);
+  emit(c, far ? 'bannerClothFar' : 'bannerCloth', BROOT, TMP, null, false, k, wind, (b.id % 89) / 14, (far ? BANNER.clothHFar : BANNER.clothH) * fit.s, BTILE);
 
   // gold chevrons above the crossbar, one per rank
   for (let i = 0; i < Math.min(3, b.rank | 0); i++) {

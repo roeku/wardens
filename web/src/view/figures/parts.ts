@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 import { BH, BW, FAR } from './atlas';
 import { Builder, ball, cone, drape, fixed, rod, round, shade, shell, slab, strip } from './geom';
+import { BLIGHT_PARTS } from './blight-parts';
 import type { ClothKind } from './material';
 import {
   BLADE, CLASP, CROSS, CROSSBAR, FLETCH, GOLD, IRON, POLE, REINS, SADDLE, SHIELD_BACK, SPEAR_HEAD, STEEL, STRING, WOOD,
@@ -65,11 +66,15 @@ export interface PartDef {
   atlas?: 'banner' | 'bannerFar' | 'shield';
   /** Casts a shadow (cards and small details don't need to). */
   shadow?: boolean;
+  /** Drawn its paint, unlit: the blight's eyes and cracks. */
+  glow?: boolean;
+  /** The drakes' breath: unlit and dithered (material.ts). */
+  flame?: boolean;
 }
 
 const leather = fixed(SADDLE);
 
-export const PARTS = {
+const MEN_PARTS = {
   // ---------------------------------------------------------------- body
   leg: {
     build(b) {
@@ -558,6 +563,8 @@ export const PARTS = {
   },
 } satisfies Record<string, PartDef>;
 
+/** Every part: the men's, horses' and banners' above, and the blight's (blight-parts.ts). */
+export const PARTS = { ...MEN_PARTS, ...BLIGHT_PARTS };
 export type PartId = keyof typeof PARTS;
 
 /** A heater outline in the y–z plane, matching the 12×14 shield tile (top flat, sides curving to a point). */

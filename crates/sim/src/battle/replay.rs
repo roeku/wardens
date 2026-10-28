@@ -32,11 +32,15 @@ pub struct Replay {
     pub tune: Option<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bots: Vec<BotSlot>,
+    /// The armies by name (`Setup::named`): empty or `blight` is what the map kind opens with, `mirror` the
+    /// symmetric human field of day 3.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub setup: String,
 }
 
 impl Replay {
     pub fn new(seed: u32, map: MapOpts) -> Replay {
-        Replay { seed, map, tick: 0, log: Vec::new(), tune: None, bots: Vec::new() }
+        Replay { seed, map, tick: 0, log: Vec::new(), tune: None, bots: Vec::new(), setup: String::new() }
     }
 
     pub fn from_json(json: &str) -> Result<Replay, String> {
@@ -49,7 +53,7 @@ impl Replay {
             Some(over) => Tune::with_override(over)?,
             None => Tune::default(),
         };
-        let mut b = Battle::new(self.seed, self.map, &Setup::for_map(self.map.kind), tune);
+        let mut b = Battle::new(self.seed, self.map, &Setup::named(&self.setup, self.map.kind)?, tune);
         for c in &self.log {
             b.apply(c.clone());
         }

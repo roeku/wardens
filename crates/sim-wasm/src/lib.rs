@@ -162,7 +162,8 @@ impl Battle {
         self.frame.strikes.as_ptr() as usize
     }
 
-    /// `soldier_buf::TICK_FIELDS` u32 per soldier: the tick he was last hit, the tick he died (`NEVER` if not).
+    /// `soldier_buf::TICK_FIELDS` u32 per soldier: the tick he was last hit, the tick he died and the tick his last
+    /// breath jet began (`NEVER` if not).
     pub fn soldier_ticks_ptr(&self) -> usize {
         self.frame.ticks.as_ptr() as usize
     }
@@ -183,6 +184,11 @@ impl Battle {
     /// One bit-packed u32 per squad (contracts `squad_buf`).
     pub fn squad_u32_ptr(&self) -> usize {
         self.frame.qu32.as_ptr() as usize
+    }
+
+    /// One u32 per squad: its unit id in bits 0..7 (contracts `squad_buf`).
+    pub fn squad_unit_ptr(&self) -> usize {
+        self.frame.qunit.as_ptr() as usize
     }
 
     pub fn events_ptr(&self) -> usize {

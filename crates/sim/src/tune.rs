@@ -5,12 +5,15 @@
 //! choice is recorded in out/decisions-battle.md and the field's comment says "chosen".
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 use crate::contracts::Kind;
+use crate::units::Unit;
 
-/// One kind's stats (docs/spec/04-battle.md §2). Units merge partial overrides onto these.
+/// One kind's stats (docs/spec/04-battle.md §2). Units merge partial overrides onto these (`Units`). Every rule a
+/// unit brings is one of these stats ("never an `if (unit.id === …)`"); an unknown name in an override is an error.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct KindSpec {
     pub men: u16,
     pub hp: f64,
@@ -40,6 +43,16 @@ pub struct KindSpec {
     pub beast: bool,
     /// A man's heading may change at most this fast, rad/s, at constant speed (0: no limit). Elephant 1.1.
     pub turn: f64,
+    /// Drake breath (§5 "Drake breath"): the harm of one jet, shared over its pulses, ignoring armour. A breather
+    /// hunts (rear, jet, bite, spring back) instead of standing to strike; 0: no breath.
+    #[serde(default)]
+    pub breath: f64,
+    /// A pack (§3a): files ×1.15, the rank's ends pushed back, seeded jitter. Packs take the wings.
+    #[serde(default)]
+    pub pack: bool,
+    /// Myth rule `impact` (§5): a blow lands this many seconds after it starts (0: at once).
+    #[serde(default)]
+    pub impact: f64,
 }
 
 impl KindSpec {
@@ -78,6 +91,9 @@ impl KindSpec {
             never_routes: false,
             beast: false,
             turn: 0.0,
+            breath: 0.0,
+            pack: false,
+            impact: 0.0,
         }
     }
 
@@ -105,7 +121,8 @@ pub struct Kinds {
     pub levy: KindSpec,
     pub folk: KindSpec,
     pub captain: KindSpec,
-    /// Placeholder until the blight's rosters land: the wild drake's hp and bite, levy-like otherwise.
+    /// The base the blight's beasts merge onto (§5 "Beasts": bane applies, horse terror, cleave, trample, turning at
+    /// most 1.1 rad/s): the wild drake's hp and bite, levy-like otherwise. The units table makes trolls and drakes.
     pub beast: KindSpec,
 }
 
@@ -137,6 +154,174 @@ impl Kinds {
             Kind::Captain => &self.captain,
             Kind::Beast => &self.beast,
         }
+    }
+}
+
+/// One unit: its base kind and the stats it overrides (04-battle.md §2 "Unit overrides"), merged as
+/// `spec = {...KINDS[kind], ...stats}`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct UnitSpec {
+    pub kind: Kind,
+    #[serde(default)]
+    pub stats: Map<String, Value>,
+}
+
+fn unit(kind: Kind, stats: Value) -> UnitSpec {
+    UnitSpec { kind, stats: stats.as_object().cloned().unwrap_or_default() }
+}
+
+/// The units table. The warband's units are their kinds; the blight's stats are the spec's where it gives them
+/// (the wild drake: hp 18, bite 3.4, breath 6, pack, 3–4 per company) and chosen where it is silent (trolls, the
+/// drake's pace and size, the broodlord), recorded in out/decisions-blight-sim.md.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Units {
+    pub spear: UnitSpec,
+    pub shield: UnitSpec,
+    pub archer: UnitSpec,
+    pub horse: UnitSpec,
+    pub levy: UnitSpec,
+    pub folk: UnitSpec,
+    pub captain: UnitSpec,
+    /// The blight's swarm: levy stats (00-start-here.md §A4).
+    pub blightman: UnitSpec,
+    /// A great beast with heavy, slow blows that land after `impact`, cleaving (chosen; the spec names trolls and
+    /// their impact blows only).
+    pub troll: UnitSpec,
+    /// The wild drake (04-battle.md §2 "Norse drakes"): hp 18, bite 3.4, breath 6, a pack of 3.
+    pub drake: UnitSpec,
+    /// The blight's commander in the general's place: a great beast that never routes (chosen).
+    pub broodlord: UnitSpec,
+}
+
+impl Default for Units {
+    fn default() -> Units {
+        Units {
+            spear: unit(Kind::Spear, json!({})),
+            shield: unit(Kind::Shield, json!({})),
+            archer: unit(Kind::Archer, json!({})),
+            horse: unit(Kind::Horse, json!({})),
+            levy: unit(Kind::Levy, json!({})),
+            folk: unit(Kind::Folk, json!({})),
+            captain: unit(Kind::Captain, json!({})),
+            blightman: unit(Kind::Levy, json!({})),
+            troll: unit(
+                Kind::Beast,
+                json!({
+                    "men": 3, "hp": 30.0, "damage": 4.5, "interval": 2.2, "speed": 1.3, "arrow_taken": 0.7,
+                    "charge": 1.0, "charge_taken": 1.0, "steadiness": 0.6, "cost": 90.0, "radius": 0.7, "frontage": 3,
+                    "turn": 1.1, "impact": 0.5
+                }),
+            ),
+            drake: unit(
+                Kind::Beast,
+                json!({
+                    "men": 3, "hp": 18.0, "damage": 3.4, "interval": 3.2, "speed": 2.2, "arrow_taken": 1.0,
+                    "steadiness": 0.8, "cost": 90.0, "radius": 0.55, "turn": 2.5, "breath": 6.0, "pack": true
+                }),
+            ),
+            broodlord: unit(
+                Kind::Captain,
+                json!({
+                    "hp": 150.0, "damage": 5.0, "interval": 1.2, "speed": 2.4, "arrow_taken": 0.6, "charge": 1.5,
+                    "radius": 0.8, "beast": true, "turn": 1.6, "impact": 0.35
+                }),
+            ),
+        }
+    }
+}
+
+impl Units {
+    pub fn get(&self, u: Unit) -> &UnitSpec {
+        match u {
+            Unit::Spear => &self.spear,
+            Unit::Shield => &self.shield,
+            Unit::Archer => &self.archer,
+            Unit::Horse => &self.horse,
+            Unit::Levy => &self.levy,
+            Unit::Folk => &self.folk,
+            Unit::Captain => &self.captain,
+            Unit::BlightMan => &self.blightman,
+            Unit::Troll => &self.troll,
+            Unit::Drake => &self.drake,
+            Unit::Broodlord => &self.broodlord,
+        }
+    }
+}
+
+/// Drake breath and the hunt (04-battle.md §5 "Drake breath"), seconds from the start of a cycle.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct BreathTune {
+    /// It rears until the jet starts.
+    pub rear: f64,
+    pub jet: f64,
+    /// The flame's tail after the jet (no harm; the view draws it).
+    pub tail: f64,
+    pub bite: f64,
+    pub period: f64,
+    /// The cone: reach and half-angle, sweeping ±`sweep` across the jet, rooted `root` tiles ahead.
+    pub reach: f64,
+    pub half_angle: f64,
+    pub sweep: f64,
+    pub root: f64,
+    /// A pulse every `pulse` seconds of the jet; each deals `breath/pulses`.
+    pub pulse: f64,
+    /// Each company caught loses `morale·steadiness` per pulse.
+    pub morale: f64,
+    /// The hunt: rear when the prey is within `hunt_r`; lunge at `lunge`× pace `lunge_before` s before the bite;
+    /// spring back to `spring`, still facing the prey.
+    pub hunt_r: f64,
+    pub lunge: f64,
+    pub lunge_before: f64,
+    pub spring: f64,
+    /// A spot's density counts foes within this of a candidate prey; a spot within it of a pack-mate's prey is
+    /// taken (chosen).
+    pub spot_r: f64,
+    /// Meeting a drake: men step at most this far from their slots, and the block presses forward.
+    pub meet_step: f64,
+}
+
+impl Default for BreathTune {
+    fn default() -> BreathTune {
+        BreathTune {
+            rear: 0.4,
+            jet: 1.2,
+            tail: 0.55,
+            bite: 2.3,
+            period: 3.2,
+            reach: 2.3,
+            half_angle: 0.3,
+            sweep: 0.3,
+            root: 1.0,
+            pulse: 0.25,
+            morale: 1.6,
+            hunt_r: 2.4,
+            lunge: 1.6,
+            lunge_before: 0.45,
+            spring: 2.1,
+            spot_r: 1.5,
+            meet_step: 1.0,
+        }
+    }
+}
+
+impl BreathTune {
+    /// Pulses in one jet: one at its start and every `pulse` seconds while it runs.
+    pub fn pulses(&self) -> u32 {
+        ((self.jet / self.pulse.max(1e-6)).ceil() as u32).max(1)
+    }
+}
+
+/// A pack's formation (04-battle.md §3a "Variations").
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PackTune {
+    pub files: f64,
+    pub ends_back: f64,
+    pub jitter: f64,
+}
+
+impl Default for PackTune {
+    fn default() -> PackTune {
+        PackTune { files: 1.15, ends_back: 0.5, jitter: 0.125 }
     }
 }
 
@@ -421,6 +606,8 @@ pub struct CombatTune {
     pub drift_rate: f64,
     /// A Charge (or Volley) event per company at most this often, seconds (chosen).
     pub event_gap_s: f64,
+    /// An `impact` blow lands only if its victim is still within reach plus this when it lands (chosen).
+    pub impact_slack: f64,
 }
 
 impl Default for CombatTune {
@@ -455,6 +642,7 @@ impl Default for CombatTune {
             face_rate: 2.5,
             drift_rate: 2.0,
             event_gap_s: 3.0,
+            impact_slack: 0.5,
         }
     }
 }
@@ -798,29 +986,55 @@ impl Default for GeneralTune {
     }
 }
 
+/// How beasts choose their quarry (04-battle.md §7 "Contact"), for the general and the garrison alike.
+/// Breathers score `d·0.5 − men`, horse +8, bane +12, braced +3, already fighting −4 (lower is better); elephants,
+/// and so trolls, go at the nearest foot within 24.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct QuarryTune {
+    pub dist: f64,
+    pub men: f64,
+    pub horse: f64,
+    pub bane: f64,
+    pub braced: f64,
+    pub fighting: f64,
+    /// Breathers look this far for quarry (chosen: the elephants' 24).
+    pub breather_r: f64,
+    pub foot_r: f64,
+}
+
+impl Default for QuarryTune {
+    fn default() -> QuarryTune {
+        QuarryTune { dist: 0.5, men: 1.0, horse: 8.0, bane: 12.0, braced: 3.0, fighting: -4.0, breather_r: 24.0, foot_r: 24.0 }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BotTune {
     pub garrison: GarrisonTune,
     pub general: GeneralTune,
+    pub quarry: QuarryTune,
     /// The mindless charge and the sensible commander think this often (chosen).
     pub charge_think_s: f64,
 }
 
 impl Default for BotTune {
     fn default() -> BotTune {
-        BotTune { garrison: GarrisonTune::default(), general: GeneralTune::default(), charge_think_s: 1.0 }
+        BotTune { garrison: GarrisonTune::default(), general: GeneralTune::default(), quarry: QuarryTune::default(), charge_think_s: 1.0 }
     }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Tune {
     pub kinds: Kinds,
+    pub units: Units,
     pub rank: RankTune,
     pub movement: MoveTune,
     pub army: ArmyTune,
     pub front: FrontTune,
     pub combat: CombatTune,
     pub beast: BeastTune,
+    pub breath: BreathTune,
+    pub pack: PackTune,
     pub morale: MoraleTune,
     pub ways: WaysTune,
     pub ride: RideTune,
@@ -831,11 +1045,28 @@ pub struct Tune {
 }
 
 impl Tune {
-    /// The defaults with a JSON override deep-merged on top.
+    /// The defaults with a JSON override deep-merged on top. Every unit must still make a valid spec.
     pub fn with_override(over: &Value) -> Result<Tune, String> {
         let mut v = serde_json::to_value(Tune::default()).map_err(|e| e.to_string())?;
         merge(&mut v, over.clone());
-        serde_json::from_value(v).map_err(|e| format!("tune override: {e}"))
+        let t: Tune = serde_json::from_value(v).map_err(|e| format!("tune override: {e}"))?;
+        for u in Unit::ALL {
+            t.unit_spec(u)?;
+        }
+        Ok(t)
+    }
+
+    /// A unit's merged stats: its kind's, with the unit's overrides on top (04-battle.md §2).
+    pub fn unit_spec(&self, u: Unit) -> Result<KindSpec, String> {
+        let us = self.units.get(u);
+        let mut v = serde_json::to_value(self.kinds.get(us.kind)).map_err(|e| e.to_string())?;
+        merge(&mut v, Value::Object(us.stats.clone()));
+        serde_json::from_value(v).map_err(|e| format!("unit {}: {e}", u.name()))
+    }
+
+    /// A unit's base kind.
+    pub fn unit_kind(&self, u: Unit) -> Kind {
+        self.units.get(u).kind
     }
 }
 
@@ -874,5 +1105,26 @@ mod tests {
         let archer = t.kinds.archer.worth(&t.rank, 0);
         assert!((archer - 7.0 * 1.5 / 1.6 * 1.28).abs() < 1e-9);
         println!("worth: spear {spear:.2}, archer {archer:.2}, captain {:.1}", t.kinds.captain.worth(&t.rank, 0));
+    }
+
+    #[test]
+    fn units_merge_their_overrides_onto_their_kind() {
+        let t = Tune::default();
+        // A unit without overrides is its kind exactly.
+        assert_eq!(t.unit_spec(Unit::Spear).unwrap(), t.kinds.spear);
+        assert_eq!(t.unit_spec(Unit::BlightMan).unwrap(), t.kinds.levy, "blight-men have levy stats");
+        let drake = t.unit_spec(Unit::Drake).unwrap();
+        assert_eq!((drake.hp, drake.damage, drake.breath, drake.pack, drake.beast), (18.0, 3.4, 6.0, true, true), "the wild drake");
+        assert!((3..=4).contains(&drake.men));
+        let troll = t.unit_spec(Unit::Troll).unwrap();
+        assert!(troll.impact > 0.0 && troll.beast);
+        let lord = t.unit_spec(Unit::Broodlord).unwrap();
+        assert!(lord.never_routes && lord.beast && t.unit_kind(Unit::Broodlord) == Kind::Captain);
+        // The JSON override reaches a unit's stats and its kind, and a misspelt stat is refused.
+        let o = Tune::with_override(&serde_json::json!({"units": {"troll": {"stats": {"hp": 44.0}}}})).unwrap();
+        assert_eq!((o.unit_spec(Unit::Troll).unwrap().hp, o.unit_spec(Unit::Troll).unwrap().damage), (44.0, troll.damage));
+        assert!(Tune::with_override(&serde_json::json!({"units": {"troll": {"stats": {"hpp": 44.0}}}})).is_err());
+        let worth: Vec<String> = Unit::ALL.iter().map(|&u| format!("{} {:.1}", u.name(), t.unit_spec(u).unwrap().worth(&t.rank, 0))).collect();
+        println!("units: {} merge onto their kinds; worth per man: {}", Unit::ALL.len(), worth.join(", "));
     }
 }

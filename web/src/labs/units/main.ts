@@ -7,7 +7,7 @@ import { PixelRenderer, SHADOW_MAP, type Tier } from '../../view/renderer';
 import { MAX_LIGHTS } from '../../view/shaders';
 import { gradientMap } from '../../view/toon';
 import { coverage, figureMismatch, lastDelta, same, shiftMismatch, type Img } from './flicker';
-import { buildRecords, POSES, type Cast, type Pose } from './roster';
+import { buildRecords, firstId, POSES, type Cast, type Pose, type RosterName } from './roster';
 
 // The units lab (02-look.md §10): every kind for both teams at the game's own pixel size and light, on a plain
 // ground. Dev only: http://localhost:5173/labs/units.html. Driven from window.__lab.
@@ -72,7 +72,9 @@ scene.add(ground);
 const figures = new Figures();
 scene.add(figures.group);
 
+const ROSTERS: RosterName[] = ['warband', 'blight', 'both'];
 const cast: Cast = {
+  roster: ROSTERS.includes(params.get('roster') as RosterName) ? (params.get('roster') as RosterName) : 'both',
   teams: [0, 1],
   rank: 0,
   pose: 'stand',
@@ -85,6 +87,7 @@ const cast: Cast = {
   heart: 1,
   lost: 0,
   honours: 0,
+  breath: null,
 };
 let clock = 0;
 let running = true;
@@ -232,7 +235,7 @@ function flicker(o: FlickerOpts = {}): FlickerReport {
   let prev = read();
   const figurePixels = coverage(prev, empty);
   let prevOrigin = camera.origin.clone();
-  const anchor = () => figures.drawnAt(100)!;
+  const anchor = () => figures.drawnAt(firstId(cast))!;
   let prevAt = anchor();
   lastBad = null;
   const rep: FlickerReport = { mode, zoom: s, pose: cast.pose, frames: steps, changed: 0, badFrames: 0, maxBad: 0, totalBad: 0, maxDelta: 0, figurePixels };
@@ -321,13 +324,26 @@ const lab = {
   camera,
   renderer,
   cast,
-  /** stand | march | fight | rout | death */
+  /** stand | march | fight | rout | death | back */
   pose(p: Pose): Pose {
     setPose(p);
     frame(0);
     return p;
   },
-  /** 0 (player), 1 (enemy) or 'both'. */
+  /** Which rows: 'warband' (both teams' kinds, day 2's lab), 'blight' (the blight's roster) or 'both' (ours over it). */
+  roster(r: RosterName): RosterName {
+    if (!ROSTERS.includes(r)) throw new Error(`roster: one of ${ROSTERS.join(', ')}`);
+    cast.roster = r;
+    settle();
+    return r;
+  },
+  /** Holds the drakes at `e` seconds into their breath cycle (rear 0–0.4, jet 0.4–1.6, tail to 2.15, bite 2.3), or null. */
+  breath(e: number | null): number | null {
+    cast.breath = e;
+    frame(0);
+    return e;
+  },
+  /** 0 (player), 1 (enemy) or 'both': the warband roster's teams. */
   team(t: Team | 'both'): Team[] {
     cast.teams = t === 'both' ? [0, 1] : [t];
     settle();

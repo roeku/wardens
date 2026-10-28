@@ -1,7 +1,7 @@
 //! Engagement (step 2), blows landing together (step 4), arrows (step 6), trampling (step 7) and the cull
 //! (step 8): 04-battle.md §5.
 
-use super::{Battle, DT, Order, SquadState};
+use super::{Battle, DT, Order, SquadState, Strike};
 use crate::contracts::{EventCode, Kind, P, SquadId, Tick, Way};
 
 impl Battle {
@@ -130,9 +130,49 @@ impl Battle {
         Some(d)
     }
 
-    /// Step 4: every collected blow lands. Charges multiply by `charge·chargeTaken` (×1.3 reckless, ×0.7 against
-    /// a veteran) and cost the victim's company 3 morale; then vsHorse, bane, height and routing victims.
+    /// Blows whose `impact` is due fall now, after this tick's movement, if the victim is still within reach (plus
+    /// `impact_slack`) of a living attacker; a beast's cleave is reckoned where the blow falls.
+    fn land_blows(&mut self) {
+        if self.blows.is_empty() {
+            return;
+        }
+        let tick = self.tick;
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.blows).into_iter().partition(|w| w.lands <= tick);
+        self.blows = later;
+        let tune = self.tune.clone();
+        let mut strikes: Vec<Strike> = Vec::new();
+        for w in due {
+            let (a, v) = (&self.soldiers[w.attacker], &self.soldiers[w.victim]);
+            if !a.alive || !v.alive {
+                self.tally.missed += 1;
+                continue;
+            }
+            let (sa, sv) = (&self.squads[a.squad as usize], &self.squads[v.squad as usize]);
+            let gap = a.pos().dist(v.pos()) - (sa.spec.radius + sv.spec.radius - 2.0 * tune.movement.base_radius);
+            if gap > tune.combat.reach + tune.combat.impact_slack {
+                self.tally.missed += 1;
+                continue;
+            }
+            self.tally.landed += 1;
+            strikes.push(Strike { attacker: w.attacker, victim: w.victim, dmg: w.dmg, charge: w.charge, breath: false });
+            if sa.spec.beast {
+                self.cleave(w.attacker, w.victim, w.dmg, &tune, &mut strikes);
+            }
+        }
+        self.strikes.extend(strikes);
+    }
+
+    /// Step 4: every collected blow lands, with the impact blows now due. Charges multiply by `charge·chargeTaken`
+    /// (×1.3 reckless, ×0.7 against a veteran) and cost the victim's company 3 morale; then vsHorse, bane, height
+    /// and routing victims. Breath is flat, ignoring armour; each company it caught loses its scorch.
     pub(super) fn resolve(&mut self) {
+        self.land_blows();
+        for i in 0..self.squads.len() {
+            let loss = self.scratch.scorch.get(i).copied().unwrap_or(0.0);
+            if loss > 0.0 && self.squads[i].on_field() {
+                self.squads[i].morale -= loss;
+            }
+        }
         let strikes = std::mem::take(&mut self.strikes);
         let c = self.tune.combat.clone();
         let gap = (self.tune.combat.event_gap_s / DT) as Tick;
@@ -145,6 +185,21 @@ impl Battle {
             let (asq, vsq) = (self.soldiers[a].squad as usize, self.soldiers[v].squad as usize);
             let (att, vic) = (&self.squads[asq], &self.squads[vsq]);
             let mut mult = 1.0;
+            if st.breath {
+                let m = &mut self.soldiers[v];
+                let was = m.hp;
+                m.hp -= st.dmg;
+                m.hit_at = self.tick;
+                let (at, now) = (m.pos(), m.hp);
+                self.event(EventCode::Hit, at, v as u32, Kind::Beast as u32);
+                self.tally.burns += 1;
+                self.tally.burn_harm += st.dmg;
+                if was > 0.0 && now <= 0.0 {
+                    self.tally.burn_kills += 1;
+                    dead.push((v, a));
+                }
+                continue;
+            }
             // 08-orders.md §7 hook: charging into stakes takes chargeTaken ×0.4 and loses the charge bonus.
             let charge = st.charge && self.work_stakes(self.soldiers[v].pos()).is_none();
             if charge {
@@ -343,7 +398,9 @@ impl Battle {
                 s.state = SquadState::Destroyed;
                 s.threat = None;
                 let (at, id, fell) = (P::new(s.x, s.y), s.id as u32, s.commander_fell);
-                if !fell {
+                if s.kind == Kind::Captain && s.team == 1 {
+                    self.general_falls(i);
+                } else if !fell {
                     self.event(EventCode::BannerFall, at, id, 0);
                 }
                 continue;
@@ -368,6 +425,20 @@ impl Battle {
             for o in self.squads.iter_mut().filter(|o| o.team == team && o.id as usize != i && o.on_field() && o.kind != Kind::Captain) {
                 o.morale -= mo.foe_commander_fell;
             }
+        }
+    }
+
+    /// The enemy's own commander falls (the broodlord, or the general): the enemy-commander rules hold for him as
+    /// for a company's commander (§5: every other company of his side loses 25; FoeCommanderFall, then his banner
+    /// falls). His side's battle is lost besides (§8, checked in step 12).
+    fn general_falls(&mut self, i: usize) {
+        let mo = self.tune.morale.clone();
+        let s = &self.squads[i];
+        let (team, id, at) = (s.team, s.id as u32, P::new(s.x, s.y));
+        self.event(EventCode::FoeCommanderFall, at, id, team as u32);
+        self.event(EventCode::BannerFall, at, id, 1);
+        for o in self.squads.iter_mut().filter(|o| o.team == team && o.id as usize != i && o.on_field() && o.kind != Kind::Captain) {
+            o.morale -= mo.foe_commander_fell;
         }
     }
 

@@ -1,18 +1,24 @@
 import * as THREE from 'three';
 import { gradientMap } from '../toon';
+import { FLAME, rgb } from './palette';
 
 // Every figure part is a MeshToonMaterial on the shared 4-step ramp (02-look.md §5 "Materials"), patched so:
 // - the paint attribute mixes the instance dye in (`color.a` = how much dye applies);
 // - cloth bends in the vertex shader with the per-instance `aExtra = (wind, phase, length)`;
 // - thin things (shafts, blades, strings, reins, poles) swell about their centreline by `aExtra.x`, so they are
 //   never under 1 art pixel across;
-// - atlas cards (banner cloth, shield faces) remap their UVs per instance with `aTile = (u0, v0, du, dv)`.
+// - atlas cards (banner cloth, shield faces) remap their UVs per instance with `aTile = (u0, v0, du, dv)`; a texel
+//   whose alpha is under 0.9 (but over the 0.5 cut) glows: it is drawn its own colour, unlit (the blight's sigils);
+// - glowing parts (the blight's eyes and cracks) are drawn their paint, unlit;
+// - the flame (a drake's breath) is unlit and dithered: no alpha blending (out/decisions-blight-view.md "Flame").
 
 export type ClothKind = 'hang' | 'flag';
 export interface MatOpts {
   cloth?: ClothKind;
   thin?: boolean;
   atlas?: THREE.Texture;
+  glow?: boolean;
+  flame?: boolean;
 }
 
 /**
@@ -135,6 +141,64 @@ const LIGHTS_PARS = THREE.ShaderChunk.lights_pars_begin.replace(
   'float hemiDiffuseWeight = 0.5 * dotNL + 0.5;',
   'float hemiDiffuseWeight = floor( ( 0.5 * dotNL + 0.5 ) * 1024.0 + 0.5 ) / 1024.0;',
 );
+/** An atlas texel with alpha under 0.9 glows (drawn as painted, unlit); every drawn texel is opaque. */
+const ATLAS_GLOW = /* glsl */ `
+#include <opaque_fragment>
+if (diffuseColor.a < 0.9) gl_FragColor.rgb = diffuseColor.rgb;
+gl_FragColor.a = 1.0;`;
+const GLOW = /* glsl */ `
+#include <opaque_fragment>
+gl_FragColor.rgb = diffuseColor.rgb;`;
+
+const hex3 = (h: number) => {
+  const [r, g, b] = rgb(h);
+  return `vec3(${f8(r)}, ${f8(g)}, ${f8(b)})`;
+};
+/**
+ * The flame's varyings: its geometry is a unit cone along +x whose `aAxis.x` carries u along the jet (0..1);
+ * `aExtra` = (how far the jet has reached 0..1, how far it has faded 0..1, phase, the near end eaten away 0..1).
+ * The rim (0 at the jet's core, 1 at its silhouette) is read from the view-space normal. The dither is anchored at the figure's root pixel, so a whole-pixel move of the camera or the drake
+ * moves the flame's pixels with it (pixel stability).
+ */
+const FLAME_VS = /* glsl */ `
+varying vec2 vFlame;
+flat varying vec4 vFlameP;
+flat varying vec2 vRootWin;
+`;
+const FLAME_VS_MAIN = /* glsl */ `
+vFlame = aAxis.xy;
+vFlameP = aExtra;
+vRootWin = uPix.x > 0.0 ? floor(vec2(dot(aRoot, FIG_RIGHT), dot(aRoot, FIG_UP)) * uPix.x + 0.5) - uOrigin + floor(uPix.yz) : vec2(0.0);
+`;
+const FLAME_FS = /* glsl */ `
+varying vec2 vFlame;
+flat varying vec4 vFlameP;
+flat varying vec2 vRootWin;
+uniform float uTime;
+const int FLAME_BAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+float flameBayer(vec2 c) {
+  ivec2 i = ivec2(mod(c, 4.0));
+  return (float(FLAME_BAYER[i.x + i.y * 4]) + 0.5) / 16.0;
+}
+`;
+const FLAME_MAIN = /* glsl */ `
+#include <opaque_fragment>
+{
+  // u along the jet; r: 0 where the surface faces the camera (the jet's core), 1 at its silhouette
+  float u = vFlame.x, r = 1.0 - abs(normalize(normal).z);
+  float ext = vFlameP.x, fade = vFlameP.y, ph = vFlameP.z, eaten = vFlameP.w;
+  if (u > ext || u < eaten) discard;
+  float th = flameBayer(floor(gl_FragCoord.xy) - vRootWin);
+  float uu = u / max(ext, 1e-3);
+  // tongues: the rim and the far end break up and lick as the clock runs; the core near the mouth stays solid
+  float lick = sin(uTime * 21.0 - u * 15.0 + ph) * sin(uTime * 11.0 + r * 7.0 + u * 4.0 + ph * 1.7);
+  float dens = (1.0 - fade) * (1.75 - 1.1 * uu * uu - 0.9 * r * r * r + 0.3 * lick) - fade * 0.4;
+  if (dens < th) discard;
+  float heat = 1.12 - 0.72 * uu - 0.5 * r * r + 0.16 * lick - 0.45 * fade;
+  float k = clamp(heat + (th - 0.5) * 0.12, 0.0, 0.999);
+  gl_FragColor = vec4(k < 0.3 ? ${hex3(FLAME[0])} : k < 0.55 ? ${hex3(FLAME[1])} : k < 0.8 ? ${hex3(FLAME[2])} : ${hex3(FLAME[3])}, 1.0);
+}`;
+
 const WORLDPOS = THREE.ShaderChunk.worldpos_vertex.replace(
   'worldPosition = instanceMatrix * worldPosition;',
   'worldPosition = instanceMatrix * worldPosition;\n\t\tworldPosition.xyz += aRoot;',
@@ -143,7 +207,7 @@ const WORLDPOS = THREE.ShaderChunk.worldpos_vertex.replace(
 function patch(opts: MatOpts) {
   return (shader: THREE.WebGLProgramParametersWithUniforms) => {
     Object.assign(shader.uniforms, figureUniforms);
-    let vs = shader.vertexShader.replace('#include <common>', `#include <common>\n${PARS}${opts.atlas ? 'attribute vec4 aTile;\n' : ''}`);
+    let vs = shader.vertexShader.replace('#include <common>', `#include <common>\n${PARS}${opts.atlas ? 'attribute vec4 aTile;\n' : ''}${opts.flame ? FLAME_VS : ''}`);
     vs = vs.replace(
       '#include <color_vertex>',
       /* glsl */ `
@@ -157,15 +221,19 @@ function patch(opts: MatOpts) {
     vs = vs.replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\nvec3 clothP = position;\n${body}`);
     vs = vs.replace('#include <begin_vertex>', 'vec3 transformed = clothP;');
     if (opts.atlas) vs = vs.replace('#include <uv_vertex>', '#include <uv_vertex>\nvMapUv = uv * aTile.zw + aTile.xy;');
-    vs = vs.replace('#include <project_vertex>', PROJECT);
+    vs = vs.replace('#include <project_vertex>', PROJECT + (opts.flame ? FLAME_VS_MAIN : ''));
     vs = vs.replace('#include <worldpos_vertex>', WORLDPOS);
     shader.vertexShader = vs;
-    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_pars_begin>', LIGHTS_PARS);
+    let fs = shader.fragmentShader.replace('#include <lights_pars_begin>', LIGHTS_PARS);
+    if (opts.flame) fs = fs.replace('#include <common>', `#include <common>\n${FLAME_FS}`).replace('#include <opaque_fragment>', FLAME_MAIN);
+    else if (opts.glow) fs = fs.replace('#include <opaque_fragment>', GLOW);
+    else if (opts.atlas) fs = fs.replace('#include <opaque_fragment>', ATLAS_GLOW);
+    shader.fragmentShader = fs;
     for (const hook of figureShaderHooks) hook(shader);
   };
 }
 
-const keyOf = (o: MatOpts) => `fig:${o.cloth ?? '-'}:${o.thin ? 't' : '-'}:${o.atlas ? `a${o.atlas.id}` : '-'}`;
+const keyOf = (o: MatOpts) => `fig:${o.cloth ?? '-'}:${o.thin ? 't' : '-'}:${o.atlas ? `a${o.atlas.id}` : '-'}:${o.glow ? 'g' : '-'}:${o.flame ? 'f' : '-'}`;
 const cache = new Map<string, THREE.MeshToonMaterial>();
 
 /** The figure material for these options; one per variant, made once and never disposed (01-flow.md §8). */
@@ -179,6 +247,7 @@ export function figureMaterial(opts: MatOpts): THREE.MeshToonMaterial {
     m.alphaTest = 0.5;
     m.side = THREE.DoubleSide;
   }
+  if (opts.flame) m.side = THREE.DoubleSide;
   m.onBeforeCompile = patch(opts);
   m.customProgramCacheKey = () => key;
   cache.set(key, m);

@@ -5,7 +5,7 @@
 
 use std::thread;
 
-use sim::battle::{Battle, Order, OutcomeReason, Setup, SquadState};
+use sim::battle::{Battle, Order, OutcomeReason, Setup, SquadState, Tally};
 use sim::bots::{Bot, BotKind};
 use sim::contracts::{EventCode, TICK_HZ, Team};
 use sim::map::{MapKind, MapOpts};
@@ -21,6 +21,8 @@ const GRACE_S: f64 = 30.0;
 
 pub struct Opts {
     pub kind: MapKind,
+    /// The armies (`Setup::named`): blight or mirror.
+    pub setup: String,
     pub width: u16,
     pub us: BotKind,
     pub them: BotKind,
@@ -47,6 +49,10 @@ pub struct Run {
     pub flips: u64,
     pub squad_ticks: u64,
     pub men_left: [usize; 2],
+    /// Men at the start, per team.
+    pub men_start: [usize; 2],
+    /// What the blight's rules did (breath, the hunt, impact blows, pressing on drakes).
+    pub tally: Tally,
     /// Flips by the order the company held, for finding jitter.
     pub flips_by: Vec<(String, u64)>,
 }
@@ -67,10 +73,14 @@ fn order_name(o: &Order) -> &'static str {
 
 /// One battle, `us` as team 0 and `them` as team 1, measured tick by tick.
 pub fn run_one(seed: u32, o: &Opts) -> Run {
-    let mut b = Battle::new(seed, MapOpts { kind: o.kind, width: o.width }, &Setup::for_map(o.kind), o.tune.clone());
+    let setup = Setup::named(&o.setup, o.kind).expect("setup checked by the caller");
+    let mut b = Battle::new(seed, MapOpts { kind: o.kind, width: o.width }, &setup, o.tune.clone());
     let mut bots = [Bot::new(o.us, 0), Bot::new(o.them, 1)];
     let limit = ((b.time_limit() + GRACE_S) * TICK_HZ as f64) as u32;
     let mut run = Run { seed, ..Run::default() };
+    for t in 0..2u8 {
+        run.men_start[t as usize] = b.squads.iter().filter(|s| s.team == t).map(|s| s.alive as usize).sum();
+    }
     let n = b.soldiers.len();
     let mut last: Vec<(f64, f64)> = b.soldiers.iter().map(|m| (m.x, m.y)).collect();
     let mut step: Vec<(f64, f64)> = vec![(0.0, 0.0); n];
@@ -142,6 +152,7 @@ pub fn run_one(seed: u32, o: &Opts) -> Run {
     }
     run.outcome = b.outcome();
     run.length_s = b.time();
+    run.tally = b.tally.clone();
     for t in 0..2u8 {
         run.men_left[t as usize] = b.squads.iter().filter(|s| s.team == t && s.on_field()).map(|s| s.alive as usize).sum();
     }
@@ -168,9 +179,10 @@ pub fn sweep(o: &Opts) -> Vec<Run> {
 pub fn report(o: &Opts, runs: &[Run]) {
     let n = runs.len() as f64;
     println!(
-        "sweep {:?} {}: {} (team 0) vs {} (team 1), {} seeds from {}",
+        "sweep {:?} {} ({}): {} (team 0) vs {} (team 1), {} seeds from {}",
         o.kind,
         o.width,
+        if o.setup.is_empty() { "blight" } else { &o.setup },
         o.us.name(),
         o.them.name(),
         runs.len(),
@@ -250,6 +262,29 @@ pub fn report(o: &Opts, runs: &[Run]) {
         let parts: Vec<String> = by.iter().take(10).map(|(k, n)| format!("{k} {n}")).collect();
         println!("flips by kind/order: {}", parts.join(", "));
     }
+    let sum = |f: &dyn Fn(&Tally) -> f64| runs.iter().map(|r| f(&r.tally)).sum::<f64>();
+    let per = |x: f64| x / n.max(1.0);
+    let (lost0, lost1): (usize, usize) = runs.iter().fold((0, 0), |(a, c), r| (a + r.men_start[0] - r.men_left[0], c + r.men_start[1] - r.men_left[1]));
+    println!(
+        "men lost per battle: team 0 {:.1} of {}, team 1 {:.1} of {}",
+        per(lost0 as f64),
+        runs.first().map_or(0, |r| r.men_start[0]),
+        per(lost1 as f64),
+        runs.first().map_or(0, |r| r.men_start[1])
+    );
+    println!(
+        "blight rules per battle: {:.1} jets, {:.1} burns ({:.1} harm, {:.2} kills), {:.1} scorch morale, {:.1} bites; impact blows {:.1} started, {:.1} landed, {:.1} missed; {:.0} press ticks",
+        per(sum(&|t| t.jets as f64)),
+        per(sum(&|t| t.burns as f64)),
+        per(sum(&|t| t.burn_harm)),
+        per(sum(&|t| t.burn_kills as f64)),
+        per(sum(&|t| t.scorch)),
+        per(sum(&|t| t.bites as f64)),
+        per(sum(&|t| t.impacts as f64)),
+        per(sum(&|t| t.landed as f64)),
+        per(sum(&|t| t.missed as f64)),
+        per(sum(&|t| t.presses as f64)),
+    );
     let pass = |ok: bool| if ok { "PASS" } else { "FAIL" };
     println!("gate: standing reversals < 0.1 /s/man: {}", pass(rev_rate < 0.1));
     println!("gate: state flips < 10 /squad-min: {}", pass(flip_rate < 10.0));

@@ -7,6 +7,7 @@ import {
   TICK_HZ,
   soldierBits as sb,
   squadBits as qb,
+  squadUnit,
   type Team,
   type Views,
 } from '../contracts';
@@ -51,16 +52,16 @@ export interface RecordsInput {
 
 function newMan(): ManRecord {
   return {
-    id: 0, x: 0, y: 0, h: 0, face: 0, speed: 0, kind: 'spear', team: 0, rank: 0, commander: false, captain: false,
-    routing: false, alive: true, recruit: false, strikes: 0, hitAge: Infinity, deathAge: 0, engaged: false,
-    aimX: undefined, aimY: undefined,
+    id: 0, x: 0, y: 0, h: 0, face: 0, speed: 0, kind: 'spear', unit: 'spear', team: 0, rank: 0, commander: false,
+    captain: false, routing: false, alive: true, recruit: false, strikes: 0, hitAge: Infinity, deathAge: 0, engaged: false,
+    aimX: undefined, aimY: undefined, breathAge: Infinity, backing: false,
   };
 }
 
 function newBanner(): BannerRecord {
   return {
     id: 0, x: 0, y: 0, h: 0, face: 0, speed: 0, heart: 1, lost: 0, size: 1, rank: 0, honours: 0, kind: 'spear',
-    team: 0, linen: false, captain: false, routing: false, selected: false, hover: false, unfurl: 1,
+    unit: 'spear', team: 0, linen: false, captain: false, routing: false, selected: false, hover: false, unfurl: 1,
   };
 }
 
@@ -129,6 +130,7 @@ export class Records {
       r.face = v.f32[o + F.FACE];
       r.speed = v.f32[o + F.SPEED];
       r.kind = KIND_ORDER[sb.kind(bits)];
+      r.unit = squadUnit(v.squadUnit[squad]);
       r.team = team;
       r.rank = sb.rank(bits);
       r.commander = sb.commander(bits);
@@ -139,6 +141,9 @@ export class Records {
       r.strikes = v.strikes[k];
       r.hitAge = age(v.ticks[k * T.FIELDS + T.HIT_AT]);
       r.deathAge = alive ? 0 : age(v.ticks[k * T.FIELDS + T.DIED_AT]);
+      // a drake's breath cycle, from the tick the sim began it (04-battle.md §5 "Drake breath")
+      r.breathAge = age(v.ticks[k * T.FIELDS + T.BREATH_AT]);
+      r.backing = sb.backing(bits);
       // the guard and shooting stances while his company fights, or while he himself is in contact or shooting
       r.engaged = qb.state(v.squadU32[squad]) === ST_FIGHTING || sb.engaged(bits);
       const ax = v.f32[o + F.AIM_X];
@@ -197,6 +202,7 @@ export class Records {
       r.lost = Math.max(0, r.size - live);
       r.rank = qb.rank(bits);
       r.kind = kind;
+      r.unit = squadUnit(v.squadUnit[j]);
       r.team = team;
       r.captain = kind === 'captain';
       // the freed villages' levy carry plain linen until rank 2 (out/decisions-figures.md)

@@ -1,7 +1,7 @@
 //! The harness's top-down picture: tiles coloured by type and shaded by height (dimmed where team 0's fog has
 //! never seen, a little where it is not in sight now), sites as squares in their owner's colour, each squad's
-//! order as a line from its anchor, arrows in flight, the fallen as dark dots, and every living man as a dot:
-//! ringed red when in contact, pale when his company routs. Colours from docs/spec/02-look.md §4.
+//! order as a line from its anchor, arrows in flight, the fallen as dark dots, and every living man as a dot at his
+//! body's size: ringed red when in contact (or breathing), pale when his company routs. Colours from docs/spec/02-look.md §4.
 
 use image::{Rgb, RgbImage};
 use sim::battle::{Battle, Order, SquadState};
@@ -99,8 +99,10 @@ pub fn top_down(b: &Battle) -> RgbImage {
             _ => TEAM[team],
         };
         let ring = if k.engaged { ATTACK } else { INK };
-        square(&mut img, P::new(k.x, k.y), 2, ring);
-        square(&mut img, P::new(k.x, k.y), 1, colour);
+        // Beasts are drawn at their size (a man's radius 0.32 is the 2-pixel dot).
+        let half = (s.spec.radius * PX as f64 * 0.55).round().max(2.0) as i64;
+        square(&mut img, P::new(k.x, k.y), half, ring);
+        square(&mut img, P::new(k.x, k.y), half - 1, colour);
     }
     img
 }

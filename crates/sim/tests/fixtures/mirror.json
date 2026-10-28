@@ -1,0 +1,10 @@
+{
+  "seed": 11,
+  "map": { "kind": "field", "width": 48 },
+  "tick": 2700,
+  "setup": "mirror",
+  "bots": [{ "team": 0, "bot": "charge" }, { "team": 1, "bot": "general2" }],
+  "log": [
+    { "tick": 60, "team": 0, "deed": { "do": "front", "line": [{ "x": 14.0, "y": 8.0 }, { "x": 14.0, "y": 19.0 }] }, "src": "line" }
+  ]
+}

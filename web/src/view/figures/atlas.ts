@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DARK_GOLD, DEVICE, GOLD, GRIME, HERALDRY, LINEN_DEVICE, rgb } from './palette';
+import { BLIGHT, DARK_GOLD, DEVICE, EMBER, FLAME, GOLD, GRIME, HERALDRY, LINEN_DEVICE, rgb } from './palette';
 import { hash32 } from './hash';
 
 // docs/spec/02-look.md §6: the banner texture (16×26 gonfalons, drawn lazily into one atlas) and the shield
@@ -13,6 +13,8 @@ export const SH = 14;
 export const FLEUR = ['...#...', '..###..', '..###..', '#.###.#', '##.#.##', '#..#..#', '#######', '..###..', '.#...#.'];
 
 export type Mark = 'none' | 'spear' | 'shield' | 'bow' | 'horseshoe' | 'crown';
+/** The blight's ember sigils, one per kind of company: claws (blight-men), a crack (trolls), a flame (drakes), the eye. */
+export type Sigil = 'claw' | 'crack' | 'flame' | 'eye';
 /** The shield device, 5×5. */
 export const SHIELD_FLEUR = ['..#..', '.###.', '#.#.#', '#####', '.#.#.'];
 
@@ -33,6 +35,10 @@ interface Layout {
   dark: number;
   /** The mark is centred on this column. */
   cx: number;
+  /** The blight's ragged hide: its sigils ('#' hot core, '+' ember), the row they start at, and the fringe's tongues. */
+  sigils: Record<Sigil, string[]>;
+  sigilY: number;
+  tongues: readonly number[];
 }
 
 export const NEAR: Layout = {
@@ -52,6 +58,14 @@ export const NEAR: Layout = {
   tail: 5,
   dark: 3,
   cx: 7,
+  sigils: {
+    claw: ['#.#.#..', '#.#.#..', '#.#.#..', '.#.#.#.', '.#.#.#.', '.#.#.#.', '..#.#.#', '..#.#.#', '..+.+.+'],
+    crack: ['....#..', '...##..', '...#...', '..##...', '.+#+#+.', '...##..', '....#..', '...##..', '...+...'],
+    flame: ['...+...', '..+#...', '..+#+..', '.+##+..', '.+###+.', '+##+##+', '+#+.+#+', '+#+.+#+', '.+###+.'],
+    eye: ['+.....+', '.+...+.', '..+++..', '.+###+.', '+##.##+', '.+###+.', '..+++..', '.......', '...+...'],
+  },
+  sigilY: 6,
+  tongues: [2, 5, 6, 3, 1, 4, 6, 5, 2, 0, 3, 6, 4, 2, 5, 3],
 };
 
 export const FAR: Layout = {
@@ -70,11 +84,21 @@ export const FAR: Layout = {
   tail: 4,
   dark: 2,
   cx: 5,
+  sigils: {
+    claw: ['#.#..', '#.#..', '.#.#.', '.#.#.', '..#.#', '..+.+'],
+    crack: ['..#..', '.##..', '.#...', '.##+.', '..##.', '..+..'],
+    flame: ['..+..', '.+#..', '.+#+.', '+###+', '+#.#+', '.+++.'],
+    eye: ['+...+', '.+++.', '+#.#+', '.+++.', '.....', '..+..'],
+  },
+  sigilY: 4,
+  tongues: [2, 4, 5, 1, 3, 5, 4, 1, 2, 5, 3, 1],
 };
 
 export interface BannerLook {
   ramp: Ramp;
   mark: Mark;
+  /** The blight's standard: a ragged hide with this ember sigil (ramp and mark are then unused). */
+  sigil?: Sigil;
   /** 0..3, from men lost / company size (02-look.md §6). */
   tatter: number;
   captain: boolean;
@@ -104,8 +128,9 @@ function mix(a: number, b: number, k: number): number {
 
 const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 
-/** Paints one gonfalon (row 0 at the top) in the given layout. */
+/** Paints one gonfalon (row 0 at the top) in the given layout; a blight look paints its ragged hide instead. */
 export function paintBanner(look: BannerLook, L: Layout = NEAR): RGBA[][] {
+  if (look.sigil) return paintHide(look, L);
   const { w: W, h: H } = L;
   const ramp = HERALDRY[look.ramp];
   const linen = look.ramp === 2;
@@ -144,9 +169,37 @@ export function paintBanner(look: BannerLook, L: Layout = NEAR): RGBA[][] {
     stamp(pat, L.cx - Math.floor(pat[0].length / 2), L.markCy - Math.floor(pat.length / 2), markCol);
   }
 
-  // tatters: 1 the tail is eaten, 2 the fly is torn, 3 holes beside the device and grime
+  tatter(g, look, L, keep, true);
+
+  // the outline: every cloth pixel on the edge or next to a cut is ramp[0] (dark gold for the captain), and
+  // the captain's banner has a gold ring just inside it
+  const edge = (x: number, y: number) =>
+    x === 0 || y === 0 || x === W - 1 || y === H - 1 || N4.some(([dx, dy]) => g[y + dy]?.[x + dx] == null);
+  const out: RGBA[][] = g.map((row) => row.map((c) => (c === null ? CLEAR : toRGBA(c))));
+  const outer = new Set<number>();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (g[y][x] !== null && edge(x, y)) {
+    out[y][x] = toRGBA(look.captain ? DARK_GOLD : ramp[0]);
+    outer.add(y * W + x);
+  }
+  if (look.captain) {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (g[y][x] === null || outer.has(y * W + x)) continue;
+      if (g[y][x] === device || g[y][x] === markCol) continue;
+      if (N4.some(([dx, dy]) => outer.has((y + dy) * W + x + dx))) out[y][x] = toRGBA(GOLD);
+    }
+  }
+  if (look.tatter >= 3) grime(out);
+  return out;
+}
+
+/**
+ * Tatters (02-look.md §6): 1 the tail is eaten (the gonfalon's swallowtail rows, or the hide's fringe), 2 the fly is
+ * torn, 3 two or three holes beside the device, never through it (`keep`).
+ */
+function tatter(g: (number | null)[][], look: BannerLook, L: Layout, keep: Set<number>, eatTail: boolean): void {
+  const { w: W, h: H } = L;
   const h = (salt: number) => hash32(look.variant, salt, 77);
-  if (look.tatter >= 1) {
+  if (look.tatter >= 1 && eatTail) {
     for (let x = 0; x < W; x++) {
       const bite = Math.round(L.tail * 0.4) + (h(x) % 3 === 0 ? 1 : 0);
       for (let y = H - bite; y < H; y++) g[y][x] = null;
@@ -171,31 +224,69 @@ export function paintBanner(look: BannerLook, L: Layout = NEAR): RGBA[][] {
       made++;
     }
   }
+}
 
-  // the outline: every cloth pixel on the edge or next to a cut is ramp[0] (dark gold for the captain), and
-  // the captain's banner has a gold ring just inside it
-  const edge = (x: number, y: number) =>
-    x === 0 || y === 0 || x === W - 1 || y === H - 1 || N4.some(([dx, dy]) => g[y + dy]?.[x + dx] == null);
-  const out: RGBA[][] = g.map((row) => row.map((c) => (c === null ? CLEAR : toRGBA(c))));
-  const outer = new Set<number>();
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (g[y][x] !== null && edge(x, y)) {
-    out[y][x] = toRGBA(look.captain ? DARK_GOLD : ramp[0]);
-    outer.add(y * W + x);
+/** Grime on every opaque texel; a glowing one stays bright. */
+function grime(out: RGBA[][]): void {
+  for (const row of out) for (const p of row) if (p[3] === 255) {
+    p[0] = Math.round(p[0] * GRIME[0]);
+    p[1] = Math.round(p[1] * GRIME[1]);
+    p[2] = Math.round(p[2] * GRIME[2]);
   }
-  if (look.captain) {
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      if (g[y][x] === null || outer.has(y * W + x)) continue;
-      if (g[y][x] === device || g[y][x] === markCol) continue;
-      if (N4.some(([dx, dy]) => outer.has((y + dy) * W + x + dx))) out[y][x] = toRGBA(GOLD);
+}
+
+/** Alpha of a glowing texel: over the material's 0.5 cut, under its 0.9 glow line (material.ts). */
+const GLOW_A = 204;
+
+/**
+ * The blight's standard (out/decisions-blight-view.md "Standards"): a ragged hide in the blight's ramp, its sides
+ * notched, its foot a fringe of tongues, mottled with darker stains, the top rolled over the crossbar, and an ember
+ * sigil burnt into it that glows ('#' the hot core, '+' the ember). No heraldry, no cream, no gold. It tatters like
+ * a banner: the fringe is eaten, the fly torn, holes punched beside the sigil, then grime.
+ */
+function paintHide(look: BannerLook, L: Layout): RGBA[][] {
+  const { w: W, h: H } = L;
+  const R = BLIGHT;
+  const v = look.variant & 3;
+  const hv = (a: number, b: number) => hash32(a, b, 0xb11e);
+  const g: (number | null)[][] = [];
+  const bodyEnd = H - L.tail - 2;
+  for (let y = 0; y < H; y++) {
+    const row: (number | null)[] = [];
+    const inL = y > 1 && hv(y, 1 + v) % 6 === 0 ? 1 : 0;
+    const inR = y > 1 && hv(y, 9 + v) % 5 === 0 ? 1 : 0;
+    for (let x = 0; x < W; x++) {
+      const tongue = L.tongues[(x + v * 5) % L.tongues.length] * (look.tatter >= 1 ? 0.5 : 1);
+      const inside = x >= inL && x < W - inR && y < bodyEnd + Math.round(tongue);
+      // mottled: darker stains by a fixed dither, and the shade columns at the fly
+      const stain = hv(x * 31 + y, 17) % 9 === 0 || (hv(x >> 1, (y >> 1) + 40) % 7 === 0 && (x + y) % 2 === 0);
+      row.push(!inside ? null : y === 1 ? R[3] : x >= W - 1 - L.dark || stain ? R[1] : R[2]);
     }
+    g.push(row);
   }
-  if (look.tatter >= 3) {
-    for (const row of out) for (const p of row) if (p[3]) {
-      p[0] = Math.round(p[0] * GRIME[0]);
-      p[1] = Math.round(p[1] * GRIME[1]);
-      p[2] = Math.round(p[2] * GRIME[2]);
-    }
-  }
+  // the sigil, kept clear of holes
+  const keep = new Set<number>();
+  const pat = L.sigils[look.sigil ?? 'claw'];
+  const x0 = L.cx - Math.floor(pat[0].length / 2);
+  const hot = new Map<number, number>();
+  pat.forEach((line, dy) =>
+    [...line].forEach((ch, dx) => {
+      const x = x0 + dx, y = L.sigilY + dy;
+      for (const [ox, oy] of [[0, 0], ...N4]) keep.add((y + oy) * W + x + ox);
+      if (ch === '#' || ch === '+') hot.set(y * W + x, ch === '#' ? FLAME[1] : EMBER);
+    }),
+  );
+  tatter(g, look, L, keep, false);
+  const edge = (x: number, y: number) => x === 0 || y === 0 || x === W - 1 || y === H - 1 || N4.some(([dx, dy]) => g[y + dy]?.[x + dx] == null);
+  const out: RGBA[][] = g.map((row, y) =>
+    row.map((c, x) => {
+      if (c === null) return CLEAR;
+      const glow = hot.get(y * W + x);
+      if (glow !== undefined) return toRGBA(glow, GLOW_A);
+      return toRGBA(edge(x, y) ? R[0] : c);
+    }),
+  );
+  if (look.tatter >= 3) grime(out);
   return out;
 }
 
@@ -288,8 +379,9 @@ export class BannerAtlas extends CellAtlas {
     super(BW, BH, 24, 12);
   }
   get(look: BannerLook, far: boolean, out: Float32Array | number[], o = 0): void {
-    const v = look.tatter >= 2 ? look.variant & 3 : 0;
-    const key = `${look.ramp}|${look.mark}|${look.tatter}|${look.captain ? 1 : 0}|${v}`;
+    // a hide's ragged edge varies by company always; a gonfalon's only once it is torn
+    const v = look.tatter >= 2 || look.sigil ? look.variant & 3 : 0;
+    const key = `${look.sigil ?? look.ramp}|${look.mark}|${look.tatter}|${look.captain ? 1 : 0}|${v}`;
     if (far) this.far.tile(key, () => paintBanner({ ...look, variant: v }, FAR), out, o);
     else this.tile(key, () => paintBanner({ ...look, variant: v }, NEAR), out, o);
   }

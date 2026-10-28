@@ -7,7 +7,7 @@
 //! fighting, and everyone else attacks the nearest foe within 12. Skill 1 adds the reserve and resting; skill 2
 //! pulls wavering companies out, focuses wavering foes and keeps the captain back when hurt.
 
-use super::{Memory, Orders, Seen, companies, nearest, pick, seen};
+use super::{Memory, Orders, Seen, companies, nearest, pick, quarry, seen};
 use crate::battle::{Battle, Priority, SquadState};
 use crate::contracts::{Deed, Kind, P, Team, Who};
 use crate::map::{MapKind, SiteKind};
@@ -149,6 +149,11 @@ pub(super) fn think(b: &Battle, team: Team, skill: u8, take_keep: bool, mem: &mu
                 let to = b.open_near(behind(line_centre, g.bow_back));
                 out.push(b, Deed::Move { who, to, via: Vec::new(), fight: false, face: Some(heading) });
             }
+            continue;
+        }
+        // Breathers pick their quarry by score; trolls go at the nearest foot (§7 "Contact").
+        if let Some(f) = quarry(b, i, &foes, here) {
+            out.push(b, Deed::Attack { who, target: f.id, via: Vec::new() });
             continue;
         }
         if s.kind == Kind::Horse && skill >= 1 {

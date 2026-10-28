@@ -55,6 +55,9 @@ enum Cmd {
         /// Team 1's bot: general0..2 or garrison (default: general1 on the field, garrison otherwise).
         #[arg(long)]
         them: Option<String>,
+        /// The armies: blight (the warband against the blight) or mirror (the symmetric human field).
+        #[arg(long, default_value = "blight")]
+        setup: String,
         #[arg(long, default_value_t = 30)]
         seeds: u32,
         /// The first seed.
@@ -83,6 +86,9 @@ enum Act {
         /// A bot playing team 1, e.g. garrison or general1.
         #[arg(long)]
         them: Option<String>,
+        /// The armies: blight or mirror.
+        #[arg(long, default_value = "blight")]
+        setup: String,
     },
     /// Give an order now, e.g. `do march 20 13.5`, `do send BORS 18 6`, `do attack army E6`.
     Do {
@@ -117,14 +123,15 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Cmd::Play { session, act } => play(&session, act),
-        Cmd::Sweep { map, width, us, them, seeds, from, verbose } => {
+        Cmd::Sweep { map, width, us, them, setup, seeds, from, verbose } => {
             let kind = map_kind(&map)?;
+            sim::battle::Setup::named(&setup, kind)?;
             let them = them.unwrap_or_else(|| if kind == MapKind::Field { "general1".into() } else { "garrison".into() });
             let tune = match std::env::var("PROTO_TUNE") {
                 Ok(over) => Tune::with_override(&serde_json::from_str(&over).map_err(|e| format!("PROTO_TUNE: {e}"))?)?,
                 Err(_) => Tune::default(),
             };
-            let opts = sweep::Opts { kind, width, us: BotKind::parse(&us)?, them: BotKind::parse(&them)?, seeds, from, verbose, tune };
+            let opts = sweep::Opts { kind, setup, width, us: BotKind::parse(&us)?, them: BotKind::parse(&them)?, seeds, from, verbose, tune };
             let started = std::time::Instant::now();
             let runs = sweep::sweep(&opts);
             sweep::report(&opts, &runs);
@@ -146,9 +153,13 @@ fn map_kind(map: &str) -> Result<MapKind, String> {
 
 fn play(session: &str, act: Act) -> Result<(), String> {
     let file = Path::new(SESSIONS).join(format!("{session}.json"));
-    if let Act::New { seed, map, width, us, them } = act {
+    if let Act::New { seed, map, width, us, them, setup } = act {
         let kind = map_kind(&map)?;
+        sim::battle::Setup::named(&setup, kind)?;
         let mut replay = Replay::new(seed, MapOpts { kind, width });
+        if setup != "blight" {
+            replay.setup = setup;
+        }
         for (team, bot) in [(0, us), (1, them)] {
             if let Some(bot) = bot {
                 BotKind::parse(&bot)?;

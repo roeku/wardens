@@ -5,6 +5,11 @@ export const TICK_HZ = 30;
 
 export type Team = 0 | 1; // 0 player, 1 enemy
 export type Kind = 'spear' | 'shield' | 'archer' | 'horse' | 'levy' | 'folk' | 'captain' | 'beast';
+/**
+ * The unit a company is (sim::units::Unit): its kind's rules plus who it is. The blight's units (blight-men,
+ * trolls, drakes and the broodlord) are drawn as beasts and monsters, never as soldiers (00-start-here.md §A2).
+ */
+export type Unit = 'spear' | 'shield' | 'archer' | 'horse' | 'levy' | 'folk' | 'captain' | 'blightman' | 'troll' | 'drake' | 'broodlord';
 export type Way = 'stubborn' | 'reckless' | 'steady' | 'veteran';
 export interface P { x: number; y: number }
 
@@ -39,11 +44,16 @@ export const soldierBits = {
   rank: (w: number) => (w >>> 26) & 3,
   /** In contact or shooting this tick. */
   engaged: (w: number) => ((w >>> 28) & 1) === 1,
+  /** Moving against his facing: a drake springing back plays its stride in reverse (04-battle.md §9). */
+  backing: (w: number) => ((w >>> 29) & 1) === 1,
 };
-/** Per soldier: the tick he was last hit and the tick he died, NEVER if not. */
-export const SOLDIER_TICKS = { HIT_AT: 0, DIED_AT: 1, FIELDS: 2 } as const;
+/** Per soldier: the tick he was last hit, the tick he died, and the tick his breath cycle began (a drake: rear, jet at
+ * 0.4 s, bite at 2.3 s; 04-battle.md §5); NEVER if not. */
+export const SOLDIER_TICKS = { HIT_AT: 0, DIED_AT: 1, BREATH_AT: 2, FIELDS: 3 } as const;
 export const NEVER = 0xffffffff;
 export const KIND_ORDER: Kind[] = ['spear', 'shield', 'archer', 'horse', 'levy', 'folk', 'captain', 'beast'];
+/** sim::units::Unit by id. */
+export const UNIT_ORDER: Unit[] = ['spear', 'shield', 'archer', 'horse', 'levy', 'folk', 'captain', 'blightman', 'troll', 'drake', 'broodlord'];
 
 export const SQUAD_F32 = { X: 0, Y: 1, FACE: 2, MORALE: 3, LEAN: 4, ALIVE_FRAC: 5, FIELDS: 6 } as const;
 export const SQUAD_STATE = ['idle', 'marching', 'fighting', 'routing', 'fled', 'destroyed'] as const;
@@ -56,6 +66,8 @@ export const squadBits = {
   full: (w: number) => (w >>> 16) & 0xff,
   alive: (w: number) => (w >>> 24) & 0xff,
 };
+/** The second u32 per squad (`squad_unit_ptr`): bits 0..7 the unit id (UNIT_ORDER). */
+export const squadUnit = (w: number): Unit => UNIT_ORDER[w & 0xff] ?? 'spear';
 
 export enum EventCode {
   Hit = 1, Volley, Charge, Death, BannerFall, CommanderFall, FoeCommanderFall, Rout, Rally,
@@ -77,6 +89,7 @@ export interface FrameSource {
   squad_cap(): number;
   squad_f32_ptr(): number;
   squad_u32_ptr(): number;
+  squad_unit_ptr(): number;
   events_cap(): number;
   events_ptr(): number;
   fog_len(): number;
@@ -92,7 +105,7 @@ export class Views {
   private buf: ArrayBuffer | null = null;
   private layout = -1;
   f32!: Float32Array; u32!: Uint32Array; strikes!: Uint32Array; ticks!: Uint32Array;
-  squadF32!: Float32Array; squadU32!: Uint32Array;
+  squadF32!: Float32Array; squadU32!: Uint32Array; squadUnit!: Uint32Array;
   events!: Uint32Array; eventsF32!: Float32Array;
   fog!: Uint8Array;
   constructor(private memory: WebAssembly.Memory, private src: FrameSource) {}
@@ -112,6 +125,7 @@ export class Views {
     this.ticks = new Uint32Array(this.buf, s.soldier_ticks_ptr(), cap * SOLDIER_TICKS.FIELDS);
     this.squadF32 = new Float32Array(this.buf, s.squad_f32_ptr(), qcap * SQUAD_F32.FIELDS);
     this.squadU32 = new Uint32Array(this.buf, s.squad_u32_ptr(), qcap);
+    this.squadUnit = new Uint32Array(this.buf, s.squad_unit_ptr(), qcap);
     this.events = new Uint32Array(this.buf, s.events_ptr(), ecap * EVENT_WORDS);
     this.eventsF32 = new Float32Array(this.buf, s.events_ptr(), ecap * EVENT_WORDS);
     this.fog = new Uint8Array(this.buf, s.fog_ptr(), s.fog_len());

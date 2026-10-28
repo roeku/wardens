@@ -66,7 +66,8 @@ impl Battle {
             Role::Reserve
         } else if s.spec.ranged() {
             Role::Bows
-        } else if s.kind == Kind::Horse || s.spec.beast && s.team == 0 {
+        } else if s.kind == Kind::Horse || s.spec.pack || s.spec.beast && s.team == 0 {
+            // Packs hunt round the ends of the line, as horse do.
             Role::Horse
         } else {
             Role::Line

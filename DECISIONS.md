@@ -856,3 +856,441 @@ The river now draws at the rules' width, and crags stand as steep blocks on thei
 - **Doing nothing** still wins 0% against general0, 1.0% against general1 and 0.3% against general2 (300 seeds each), as in D-11.
 **Rejected:** making the tiles follow the drawn relief (it would widen the rules' river and move every path); hiding the problem in the view by lowering the water plane.
 **Spec:** 03-land.md §3d step 3.
+
+## D-14 | 2026-10-28 | The enemy is a blight in the rules: units as data, drakes, trolls, the broodlord
+**Summary:**
+- Units are now data: a kind plus named stat overrides (`Tune::units`).
+- The blight: blight-men (levy stats); trolls with the `impact` blow and cleave; drakes with §5's breath and hunt exactly; and a broodlord in place of the captain-like general.
+- Every map kind's enemy is a blight army (`Setup::field`, `Setup::default`). `Setup::mirror` keeps day 3's human field for regression.
+- Bots use the spec's breather quarry scores.
+- Built by a delegated agent; checked again before commit.
+**Measured** (my sweep, seeds 9000+, 200 each):
+- **Charge vs general1:** 22.0% (band 20–60%; the agent saw 23–27%).
+- **Commander vs general1:** 27.5%.
+- **Keep, commander vs garrison:** 48.0% (was a 93% walkover).
+- **Jitter:** within the gates.
+- **Doing nothing vs general1: 12.0% — gate missed** (the agent saw 4–6%). A standing line with archers breaks a blight that has no missiles, and the general throws itself at it.
+**Open:**
+- **The idle miss and the weak bots**, for day 5's balance with the campaign garrisons. Smarter blight tactics against a static line: flank with drakes, hold out of bow range. Possibly a blight missile unit.
+- The broodlord rarely joins the fight, and drake bites are rare.
+
+# Decisions: the blight in the sim (04-battle §2, §3a, §5, §7, §8; 00-start-here §A2, §A4)
+
+Code: `crates/sim/src/units.rs`, `crates/sim/src/tune.rs` (`Units`, `BreathTune`, `PackTune`, `QuarryTune`,
+`CombatTune::impact_slack`), `crates/sim/src/battle/{men,combat,anchor,setup,mod,front,order,replay}.rs`,
+`crates/sim/src/bots/{mod,general,garrison}.rs`, `crates/harness/src/{sweep,main,draw}.rs`.
+
+### Units are data: a base kind plus a map of stat overrides, merged by name
+**Decision:**
+- `Tune::units` holds one `UnitSpec { kind, stats }` per unit. `stats` is a JSON object merged onto the kind's `KindSpec` (`Tune::unit_spec`), so `spec = {...KINDS[kind], ...stats}`. A JSON override can retune a stat (`{"units":{"troll":{"stats":{"hp":44}}}}`) or re-base a unit (`"kind"`).
+- `KindSpec` is `deny_unknown_fields`, and `Tune::with_override` builds every unit, so a misspelt stat is an error rather than a silent no-op.
+- `Company` carries a `unit`, and its kind comes from the table. `Company::new(kind, name)` still works: it takes the kind's own unit, and a bare `Kind::Beast` is a drake, as the beast kind's placeholder stats were.
+- `Squad.unit` sits beside `Squad.kind`. The rules read only the merged spec and the base kind (a broodlord is his side's `Captain`, trolls and drakes are `Beast`, blight-men are `Levy`). The view draws by `unit`.
+- New stats: `breath` (the harm of one jet; a breather hunts), `pack` (§3a's pack formation; packs take the wings), `impact` (seconds from a blow's start to its landing).
+
+**Why:** §2 "a unit merges partial overrides onto its kind", and "every new rule is a stat in KindSpec, never an `if (unit.id == …)`". Merging by name means a new stat needs no second partial struct to keep in step.
+**Rejected:**
+- A parallel `KindOver` struct of `Option` fields: it doubles every new stat.
+- A `Kind` per unit: the kind is the rules' class, and the view packs it in 4 bits.
+
+**Spec:** 04-battle.md §2 "Unit overrides", "Rule for adding units".
+
+### The units table
+**Decision:** where the spec gives a number it is used. Chosen values are marked (chosen).
+
+| unit | kind | stats |
+|---|---|---|
+| blightman | levy | none: levy stats (§A4) |
+| troll | beast | 3 men (chosen, within §2's "3–4 per company" for myth beasts), hp 30, damage 4.5, interval 2.2, speed 1.3, arrowTaken 0.7, charge 1, chargeTaken 1, steadiness 0.6, cost 90, radius 0.7, frontage 3, turn 1.1, **impact 0.5 s** (all chosen); cleaves as a beast |
+| drake | beast | **hp 18, bite (damage) 3.4, breath 6, pack** (spec); 3 men (spec 3–4); interval 3.2 (the cycle's period); speed 2.2, arrowTaken 1.0 (wild, not armoured), steadiness 0.8, radius 0.55, turn 2.5, cost 90 (chosen); chargeTaken 0.7 from the beast base |
+| broodlord | captain | the captain's base (never routes, regenerates out of contact) with hp 150, damage 5, interval 1.2, speed 2.4, arrowTaken 0.6, charge 1.5, radius 0.8, **beast**, turn 1.6, impact 0.35 (all chosen) |
+
+**Why:**
+- Balance, measured below. Four trolls at hp 40 and damage 6, with packs of four drakes, won 97% of field battles against the mindless charge.
+- A pack of three: one pack of four routed a 12-man spear company in a single breath cycle (4 dead, 30 morale scorched).
+- Drakes at 2.2 are quicker than men, as a predator should be. A drake turns at 2.5 rad/s, not the elephant's 1.1 (§10: the turning "looked weird").
+
+**Rejected:**
+- Trolls at 4 per company with hp 24 and damage 3.6, or hp 40 and damage 6.
+- Drakes at 1.6 (charge 36%, idle 3.5–6%: no better on idle).
+- Braver beasts (steadiness 0.4 and 0.3): charge 19.5%.
+
+**Spec:** 04-battle.md §2 "Norse drakes", "Myth creatures"; 00-start-here.md §A4.
+
+### The broodlord is his side's captain, and the enemy-commander rules hold for him
+**Decision:**
+- He stands in the general's place: kind `Captain`, unit `Broodlord`. So the army follows him, he rides (§5), the garrison "rides at the threat" with him, and his fall decides the battle (§8 `CaptainFell`, checked first, as for the human general).
+- When team 1's captain falls (the broodlord, or the human general in the mirror), the enemy-commander rules apply as they do to a company's commander: a `FoeCommanderFall` event (a = squad, b = team), then `BannerFall` (b = 1), and every other team-1 company loses 25.
+- This applies to team 1 only, so our captain's fall emits exactly what it did on day 3.
+- He is named `BROODLORD` for now. The campaign names its broodlords on day 5.
+
+**Why:** the brief: "never routes; a great beast; the enemy-commander fall rules still apply". A captain-kind beast needs no new rule. As a beast, he brings horse terror, bane and cleave.
+**Rejected:** a beast kind with a new "commander of the side" flag (it would duplicate every captain rule).
+**Spec:** 04-battle.md §5 "Commanders on the field", "The captain's ride"; §8; 00-start-here.md §A2.
+
+### Blight companies have no commanders of their own
+**Decision:** blight-men, trolls and drakes are unnamed companies; the broodlord commands them all.
+**Why:**
+- A commander is soldier 0 with 3× hp standing behind the ranks, striking only who reaches him. That idles a quarter of a three-beast pack.
+- The levy garrison of day 3 was unnamed too.
+
+**Rejected:** named blight companies with "save the last men" (to revisit when broodlords become campaign characters, 07-progression).
+**Spec:** 04-battle.md §5 "Commanders on the field".
+
+### The setups: the host on the field, the nest at a held place, the human mirror kept
+**Decision:**
+- `Setup::field()` (the open field): the warband against the host, deployed as an army round the broodlord with mirrored stations. The host is three companies of blight-men (the "swarm"), a troll company and a drake pack. Team 1's ids: broodlord 5, companies 6–10.
+- `Setup::default()` (keep, town, ford): the nest stands in a line 2.5 before the keep, each company at its post, with the broodlord on the keep. The nest is the host plus a fourth company of blight-men and a second drake pack. Team 1's ids: companies 5–11, broodlord 12.
+- `Setup::mirror()` is day 3's symmetric human field.
+- `Setup::named("blight" | "mirror", kind)`, `Replay.setup` (omitted when empty), and `harness sweep/play … --setup`.
+- Packs take the wings, at the horse's stations and at the ends of a drawn front (`role`), so they hunt round the flanks.
+
+**Why:**
+- With two companies of blight-men, doing nothing on the field won 18% (the line with its archers breaks a thin host).
+- A nest the host's size lost 82% to the commander, since a garrison fights piecemeal and one company always guards the keep.
+- Measured nests over 200 seeds:
+
+  | nest | commander wins |
+  |---|---|
+  | 3 blight-men, 1 troll, 2 drakes | 67% |
+  | 4 blight-men, 2 trolls, 1 drake | 53% |
+  | 4 blight-men, 1 troll, 2 drakes | 49% (chosen) |
+
+**Rejected:** a single composition for both places; a fourth company of blight-men on the field (charge 5–6%).
+**Spec:** 00-start-here.md §A2 ("the keep becomes the blight's nest"), §A4; 04-battle.md §3d, §4, §7.
+
+### Drake breath
+**Decision:**
+- **Pulses.** `ceil(jet/pulse)` = 5 pulses per jet, at 0.4 + k·0.25 s into the cycle. Each deals `breath·(1 + 0.1·rank)/pulses` (1.2), flat: no arrowTaken, bane, height or routing multiplier ("ignoring armour").
+- **Scorch.** Each company caught loses `1.6·steadiness` **per pulse**. It is applied in step 4 with the blows.
+- **The cone.** It is rooted 1 tile ahead along the drake's heading. Its axis sweeps linearly from −0.3 to +0.3 rad across the 5 pulses. A man is in it when his centre lies within 0.3 rad of the axis and his body's edge within 2.3 of the root. Only foes: no friendly fire.
+- **Events.** `Breath` (a = the drake's soldier index, b = 0) fires on the tick the jet starts. Burn hits emit `Hit` with b = `Kind::Beast`. The tail (0.55 s) is the view's.
+
+**Why:** 1.6 is the per-death factor without `100/full`: small and frequent, so it reads as per pulse. A sweep across the pulses reaches every part of the cone once.
+**Rejected:**
+- Scorch once per jet (1.6 per drake per cycle, hardly felt).
+- A sinusoidal sweep.
+- Counting a man in the cone by his centre's distance only (big beasts would be missed).
+
+**Spec:** 04-battle.md §5 "Drake breath".
+
+### The hunt
+**Decision:**
+- **Who hunts.** Each drake hunts on its own; its prey is its `target`. It hunts while its company fights or stands. A company marching without fighting walks, strikes in passing as men do, and drops any cycle.
+- **The prey.** It is kept through a cycle while it lives. Between cycles it is kept while within seek·1.3.
+- **The next prey.** When a cycle ends, the drake takes the foe man (within seek, 3.2) with the most foes within 1.5 of him. It prefers spots where no pack-mate's prey stood within 1.5 at the tick's start, then the nearest, then the lowest index.
+- **The cycle.** It starts on the tick the prey's centre is within 2.4. The drake approaches toward 2.1 from its prey. It holds ground (its goal is where it stands) until 1.85 s. It lunges at 1.6× pace to the men's stand-off (0.92·reach, body to body) until 2.3 s. It bites at 2.3 s if the prey is in reach (with the beast's cleave). It springs back toward 2.1 at 1.6× pace until 3.2 s.
+- **Facing.** Through the cycle it turns toward its prey at its turn rate, while its velocity is free, so it can back off facing the prey.
+
+**Why:** the spec's numbers. Reading the pack-mates' prey from the tick's start keeps "no man reads another's choice this tick" (D-11).
+**Measured** (`a_drake_rears_breathes_bites_and_springs_back`):
+- every jet started 0.4 s after the rear;
+- every bite came 2.3 s into the cycle;
+- the prey was at most 2.35 away at the rear;
+- the drake held ground at 0.05 t/s;
+- it sprang back to 1.96 on average.
+
+**Spec:** 04-battle.md §5 "The hunt", §9 "Facing".
+
+### Meeting a drake
+**Decision:**
+- **Who.** A company whose threat (§5 engagement) is a breathing company.
+- **The men.** Every man's goal is clamped within 1 tile of his slot.
+- **The anchor.** A melee company's anchor presses forward, instead of drifting with the brawl: toward the nearest drake, at the company's pace through the cohesion gate, until the front rank stands at the stand-off. A defensive leash still clamps it.
+
+**Why:** "men step at most 1 tile from their slots, and the company presses forward as a block."
+**Measured:** looseness at most 0.95 while engaged with drakes; the anchor moved 2.3 tiles in 34 press ticks.
+**Spec:** 04-battle.md §5 "Meeting a drake".
+
+### Impact blows
+**Decision:**
+- A blow from a unit with `impact` starts in step 3, and the strike counter turns then, so the view's swing starts.
+- It lands in step 4 of the tick `round(impact·30)` later, if both men live and the victim is still within reach + 0.5 (`impact_slack`); otherwise it misses.
+- A beast's cleave is reckoned where the blow lands. `Hit` is emitted at the landing.
+- Pending blows are `Battle.blows` and are hashed.
+
+**Why:** "the blow lands that many seconds after it starts". Stepping out of a slow blow should be possible, but not by a hair.
+**Measured:** 7 of 7 troll blows were timed 15 ticks ahead; 7 landed.
+**Spec:** 04-battle.md §5 "Myth rules".
+
+### The pack formation
+**Decision:**
+- "Files ×1.15" widens the file gap by 1.15; it does not multiply the file count.
+- Each rank's two end men stand 0.5 further back.
+- Each slot gets a fixed ±0.125 jitter on both axes, from `hash32(seed, squad<<16 | slot, 106/107)`.
+
+**Why:** a file count of 4.6 has no meaning; the ends pushed back make the pack's crescent.
+**Spec:** 04-battle.md §3a "Variations".
+
+### Beasts choose their quarry, in the general and in the garrison
+**Decision:**
+- **Breathers** score `0.5·d − men`, +8 for horse (not a beast), +12 for bane > 1, +3 when braced, −4 when already fighting. Lowest wins, within 24.
+- **Braced** means chargeTaken < 1 (spears) and not marching.
+- **Trolls** (beasts without breath) go at the nearest foot within 24: the line (melee foot) first, then any foot.
+- **The garrison** applies the same rule among the foes within 8 of its threat.
+- Blight-men and the broodlord follow the existing rules.
+
+**Why:**
+- §7 "Contact". The "within 24" for breathers is chosen from the elephants'.
+- "Send trolls at the line" is the brief.
+
+**Spec:** 04-battle.md §7.
+
+### A point off the map is brought inside it before it becomes a goal
+**Decision:** `open_near` clamps its point into the map (by the men's edge margin, 0.2) before snapping to an open tile.
+**Why:**
+- A drawn front's end, with the pack 2.8 + 2 beyond it, fell at y = −4.9.
+- `open_near` returned a point more than 4 tiles off the map unchanged. The pack's anchor walked off the map, its men could not follow, and the cohesion gate held the pack there for the rest of the battle.
+- This inflated idle-vs-general results with time-outs.
+- The human mirror never met it: 100 seeds of charge and idle are identical, row for row, to day 3's harness.
+
+**Spec:** 04-battle.md §3b, §4.
+
+### The harness prints what the blight's rules did
+**Decision:**
+- `Battle.tally` counts jets, burns (and their harm and kills), scorch, bites, impact blows started, landed and missed, and press ticks. It is not state: it is never read by the rules and not hashed.
+- `sweep` prints them per battle, with men lost per side.
+- `look` draws each man at his body's size.
+
+**Spec:** AGENTS.md rule 4.
+
+### Target priority by unit
+**Decision:** `Priority::Unit { unit }` ("the drakes", "the big ones", "the blight-men") beside `Priority::Kind`.
+**Why:** the order language names enemies by unit (08-orders §4); trolls and drakes share a kind.
+**Spec:** 08-orders.md §4.
+
+### The golden replays
+**Decision:**
+- The state hash now includes each squad's unit, each man's breath cycle and the pending blows.
+- `replay.json` (the keep, checked in WASM) runs to tick 2700, so native and WASM agree over breath (2 jets, 25 burns), pressing (183 ticks) and impact blows (3 landed).
+- `field.json` is the charge against general2 and the blight.
+- `mirror.json` is the same replay on `Setup::mirror` (the day-3 human field), checked natively.
+- Map and land hashes are unchanged.
+
+**Spec:** DECISIONS.md D-05, D-11.
+
+### Balance with the blight as the enemy (300 seeds unless noted, release harness)
+**Decision:** tuned only through the units table and the setups' composition.
+
+| sweep | result |
+|---|---|
+| field, charge vs general1 | 23.0% (seeds 1–300), 26.7% (5001–5300); vs general2: 23.0% |
+| field, commander vs general1 | 27.3% |
+| field, idle vs general0 / general1 / general2 | **4.0% / 6.0% / 5.0%: the ~0% target is missed** |
+| jitter | 0.002–0.065 standing reversals per man-second (highest: the charge, 0.057 and 0.065); 4.4–7.3 flips per squad-minute (both gates pass on every sweep) |
+| keep, commander vs garrison | 54.3% (seeds 1–300), 55.3% (5001–5300), of which 75 and 71 at dawn; town 55.0% over 200 |
+| keep, idle vs garrison | 99% (all at dawn: the spec's night rule; the relief from the east comes on day 4) |
+| field, mirror, charge vs general1 | 47.0% |
+| field, mirror, idle vs general1 | 1.0% |
+
+**Why the idle miss is reported, not forced:**
+- Each idle win is the host's five companies all breaking against the standing line while its archers shoot (the host has no missiles), with our archers and captain alive.
+- Every lever that took idle under 3% also took the charge under 20%:
+  - a fourth company of blight-men: charge 5–6%, idle 1–2%;
+  - braver beasts: charge 19.5%, idle 2–4.5%.
+- Levers that did not separate the two:
+  - drake pace 1.6–2.2;
+  - troll stats;
+  - the general's reserve (none: charge 12%, idle 5%);
+  - the broodlord's ride reach;
+  - counting broken companies in the reserve's commit morale.
+- No special case was added.
+
+**Rejected:** a host strong enough for idle ≈ 0% (the mindless charge falls out of its band).
+**Spec:** 00-start-here.md §A5; DECISIONS.md D-11 gates.
+
+## D-15 | 2026-10-28 | The blight drawn as beasts (02-look §4–§6; 07-progression §8)
+**Summary:**
+- Blight-men: hunched, ember-eyed, with bone weapons.
+- Stone trolls about twice a man's height, with the over-head impact blow.
+- Drakes with the full breath cycle timed from the sim, and a dithered flame cone.
+- A horned broodlord.
+- Ragged hide standards under horned skulls with ember sigils, instead of heraldic red banners.
+- The unit id travels per squad in the WASM buffers. The units lab shows both rosters.
+- Built by a delegated agent; checked again before commit.
+**Checked:** shots of a live battle and the roster read as soldiers against monsters; typecheck, clippy, and WASM = native.
+**Flicker:**
+- 0 bad frames at zooms 7–19.
+- At 23–34, 1–4 pixels change by up to 10/255 in some frames, about the same as the warband on this machine's GPU (D-09 measured 0 on another).
+- A banner-cloth flicker at zoom 19 is fixed for both sides.
+**Open:**
+- Moving figures' shadows (D-09).
+- The flame lights nothing at night, and the blight has no torches.
+- Trolls overlap at the sim's spacing.
+
+# Decisions: day 3b, the blight on screen (view side)
+
+Choices made where docs/spec is silent, to draw the enemy as a blight of beasts (00-start-here.md §A2, DECISIONS.md D-02)
+instead of human levy under heraldry. Code: `web/src/view/figures/{blight,blight-parts}.ts` and changes in `atlas.ts`,
+`material.ts`, `outfit.ts`, `rig.ts`, `figures.ts`; `web/src/battle/records.ts`; `crates/sim-wasm/src/{frame,compat,lib}.rs`;
+the contracts; the units lab (`web/src/labs/units/*`).
+
+### The unit reaches the view as a second u32 per squad
+**Decision:** `squad_buf` gains a second u32 array, one per squad (`Battle.squad_unit_ptr()`, `Views.squadUnit`): bits 0..7
+the unit id (`sim::units::Unit::id()`), the rest free. `records.ts` gives every `ManRecord` and `BannerRecord` its `unit`
+(`UNIT_ORDER` in contracts.ts).
+**Why:** the squad u32 is full (state, detached, kind, team, rank, full, alive) and the soldier u32 has three free bits, too
+few for 11 units. Every soldier's unit is his squad's, so one word per squad is enough and costs nothing per man.
+**Rejected:** widening the squad u32 to two interleaved words (every `squadU32[j]` read would change); packing the unit in
+the soldier word (no room).
+**Spec:** docs/engine/ENGINE.md "The boundary"; contracts `squad_buf`.
+
+### The breath cycle's tick, and walking backwards, in the soldier buffers
+**Decision:** `soldier_buf` gets `TICK_FIELDS = 3` with `BREATH_AT`, the tick the sim began the drake's breath cycle
+(`Soldier::cycle`; `NEVER` when none runs), and bit 29 `backing`: the man walks (pace > 0.2) against his drawn facing.
+The view's breath age is `(tick − 1 − at)/30 + acc` like the hit and death ages; the stride runs backwards while backing.
+**Why:** 04-battle.md §9: animations come from the sim, never a view timer. The cycle's start (the rear) is earlier than
+the `Breath` event (the jet), so the rear plays in time on every cycle, the first included; the event stays in the ring for
+sound. "A drake springing back plays its stride in reverse" needs the direction of motion against the facing, which the
+packed FACE (facing the prey) no longer carries.
+**Rejected:** dating the jet from the `Breath` event in the frame's drain (the first rear could not be shown; it was the
+first version, replaced when `Soldier::cycle` landed); a signed SPEED (the banners' wind reads it).
+**Spec:** 04-battle.md §5 "Drake breath", §9 "Walk", "Strikes".
+
+### FACE priority 1: a breathing beast faces its prey
+**Decision:** in `frame.rs`, a soldier of a company that breathes (`spec.breath > 0`) with a target faces the target,
+before the direction of motion. Otherwise §9's order as before.
+**Why:** §9 lists it first and D-12 left it "for beasts". The hunt's lunge and spring back keep the head on the prey; with
+motion first, a drake springing back would turn its tail to its prey.
+**Spec:** 04-battle.md §9 "Facing".
+
+### `?army=big`: the enemy's nine companies are the blight
+**Decision:** `muster("big")` fields our nine companies against five companies of blight-men, two troll companies and two
+drake packs, without commanders of their own, and the map's broodlord; on every map kind.
+**Why:** the old big army was a human garrison or a mirrored human army, the very war between peoples this work removes;
+the sim's own setups give the blight's companies no commanders (out/decisions-blight-sim.md).
+**Spec:** 01-flow.md §5 `?army=big`; 00-start-here.md §A2, §A4.
+
+### Every enemy is the blight
+**Decision:** the body a figure is drawn with (`formOf`) is its unit for the blight's units. An enemy whose unit is a
+soldier's (an old setup, the sim's `mirror` regression field) is still the blight: its general the broodlord, its horse
+drakes, its beasts trolls, anything else a blight-man (a spear company's with bone spears). A beast on our side is a drake.
+**Why:** whatever the sim fields, the screen never shows soldiers in red fighting soldiers in blue.
+**Rejected:** drawing team 1's human units as men (the anti-project look).
+**Spec:** 00-start-here.md §A2.
+
+### Blight-men
+**Decision:** a biped "brute" rig (shared with trolls and the broodlord): a torso pitched 0.6 rad forward over a hump with
+bone spurs, a low head with a heavy brow, tusks and swept-back ears thrust forward (it looks ahead again by 0.5 rad), legs
+bent at the knee with clawed feet, arms 0.14 + 0.15 long (a man's are 0.11 + 0.118) ending in claws. Scale 1.2: a head
+shorter than a man, much broader. Flesh in the blight ramp's two light steps (`#6a3e36`, `#84503f`) by id; rags of hide
+(leather and hair browns from 02-look.md §4) round the hips; half wear a hide over the hump. Weapons by id: a bone club
+(1/2), a crude iron cleaver (1/3), bare claws (1/6); spear companies bone-tipped spears. Ember eyes and a glowing crack
+down the chest. A company's commander (soldier 0) wears an antler crown at ×1.16. Stride 3.6, turn 7 rad/s (men-sized).
+The blow: the men's sword table, slower (0.35 s) and wilder (the club wound back over the head).
+**Why:** "unmistakably not human soldiers": no tabard, helmet, plume, cape or heraldry; the silhouette is a hunch, long
+arms and a jutting head; the ember eyes carry the read down to zoom 9.
+**Spec:** 02-look.md §5 (built like the men); 07-progression.md §8 (the blight ramp, the glowing cracks).
+
+### Stone trolls
+**Decision:** the brute rig at ×2.3 (about 1.4 tiles to the crown, near twice a man): short thick legs, a massive chest and
+hump with stone plates, boulder shoulders, a small head sunk forward with tusks, long arms with great fists. Skin a dark
+violet slate (`TROLL` `#4a4650 #5e5966 #77727e`), with glowing cracks on the chest, a shoulder and both forearms. A
+tree-limb club (2 in 3) or a boulder maul, carried on the shoulder. Stride 3 (beasts), turn 2.2 rad/s, a slight roll from
+foot to foot when walking (never a rise). The blow: the club wound up over the head by 0.8 × impact, slammed down on the
+impact (0.5 s, the sim's `units.troll.impact`), held 0.25 s, recovered by 1.05 s; the body leans back in the wind-up and
+throws itself into the slam.
+**Why:** the spec names stone trolls (mockup "the line and the flood") but no colours. The rock ramp is the land's; a cooler,
+darker stone keeps them a unit, not a boulder (02-look.md §4 readability). The sim counts a strike when an impact blow
+starts, so the wind-up is visible before the blow lands.
+**Rejected:** the land's rock ramp (trolls vanished against crags); a two-handed slam (the hands could not meet on the
+haft at these proportions).
+**Spec:** 04-battle.md §5 "Myth rules" `impact`; 02-look.md §4.
+
+### The broodlord
+**Decision:** the brute rig at ×2.55: backward-kneed legs with hooves, a great chest with an ember heart burst open in it
+(hotter while it strikes), a mane over the hump with bone spines, a heavy tail, a bull's skull with forward-sweeping horns
+and a second swept-back pair, long arms with bone claws. Flesh `#6a3e36`. It rakes with each arm in turn (strike parity),
+raised by 0.7 × impact, down on the impact (0.35 s, `units.broodlord.impact`). Turn 2.2 rad/s.
+**Why:** "a great horned beast clearly distinct from our captain": no horse, no gold, no red plume; the largest figure on
+the field, with the brightest ember.
+**Spec:** 00-start-here.md §A2 (broodlords); 07-progression.md §5.
+
+### Drakes
+**Decision:** a quadruped at ×1.4 (pack leader ×1.16 more), about 2.2 tiles nose to tail: a barrel with a paler belly and
+bone spines down the back, wings folded along the flanks (a bony arm, an elbow claw, a dark membrane), a three-segment
+neck rising in an S, a horned head with a hinged jaw, a six-segment tail drooping behind and swaying with the walk,
+forelegs and backward-kneed hind legs with claws, diagonal-pair gait. Hide `#6a3e36` (leaders `#4f3330`); ember seams down
+both flanks and every neck segment's throat, ember eyes. Stride 3.4, turn 2.2 rad/s.
+The breath, from the cycle's start (e seconds): rear 0–0.4 (neck up and back, forequarters lifted about the hips, forelegs
+reaching, jaw ajar, throat hot); jet 0.4–1.6 (blended in over 0.12 s: neck thrust forward and low, jaw wide, the hot maw
+showing); its head sweeps from the figure's left to its right across the pulses (0.4 → 1.4 s, ±0.3 rad, as the sim's
+pulses sweep `heading + sweep`), held to the jet's end; tail 1.6–2.15 the flame dies; the lunge from 1.85 (bite − 0.45),
+jaw wide at 2.12, snapped shut on the bite at 2.3, back by 2.65. The spring back is the sim moving it backwards: the stride
+reverses (`backing`).
+**Why:** the reference drakes (d89, myths_drakes_night) are about two and a half men long, horned, long-necked; the cycle's
+times are 04-battle.md §5's (`BreathTune`).
+**Rejected:** scale 1 (a drake the size of a dog at zoom 16).
+**Spec:** 04-battle.md §5 "Drake breath", §9; 02-look.md §5 "Animation".
+
+### The flame
+**Decision:** one part, a lumpy cone along +x, drawn from the mouth to the far end of the sim's cone (its root 1 tile ahead,
+reach 2.3: 3.3 tiles out along `heading + sweep`, at the ground), half-width 2.3 · tan 0.3 = 0.71 at the far end, 0.32 high.
+Unlit, opaque, dithered by discard (no alpha blending): density falls toward the far end and the silhouette, colour in the
+torch ramp `#d84a1c #f07a22 #ffb23a #ffe07a` by heat (hot at the mouth and the core), licked by two sines of the cloth
+clock. The jet's front races out over 0.15 s; in the 0.55 s tail it thins and its near end is eaten away from the mouth.
+The dither's 4×4 Bayer cell is anchored at the drake's root pixel, so a whole-pixel move of the camera or the drake moves
+the flame's pixels with it, and a frozen clock freezes it. It casts no shadow.
+**Why:** "dithered, no alpha blending; flame colours from 02-look §3; pixel-stable". The core is solid and the colour bands
+are wide (the dither only widens a band edge by ±0.06), so the jet reads as fire, not a speckled cone.
+**Rejected:** screen-anchored dither (crawls across the flame as the camera pans); alpha blending (AGENTS.md).
+**Spec:** 04-battle.md §5 "The cone"; 02-look.md §3 "Torches", §9 "See-through only by dither".
+
+### Glowing parts are unlit
+**Decision:** eyes, cracks, seams, the broodlord's heart and the totems' eyes are parts drawn their dye unlit (a `glow`
+material variant); a blight standard's sigil texels are drawn unlit too (atlas alpha 204: above the 0.5 cut, under 0.9).
+The eyes are small balls that swell about their own centres to ≥ 1.2 art px (the thin-part swell), so at zoom 9–16 they
+are a 1–2 px ember dot. Eyes and the jet's maw `#f07a22`/`#ffe07a`; cracks and sigil rims `#c84a1c`, sigil cores
+`#f07a22`. A corpse's embers go out (the blight's darkest `#3a2a2a`).
+**Why:** the ember is the blight's faction note (02-look.md §4: the most saturated thing on screen); lit by the toon ramp
+it went dull brown in shade. Orange-red stays clear of our blue and of the gold of honour `#e8c34a`; the yellow flame steps
+appear only in the breath and the broodlord's blow, never as a standing mark.
+**Spec:** 02-look.md §4 "The readability rule"; 07-progression.md §8 "glowing cracks `#c84a1c`".
+
+### Standards
+**Decision:** a blight company carries a standard, not a gonfalon: a ragged hide in the blight ramp (base `#6a3e36`,
+mottled and shaded `#4f3330`, rolled top `#84503f`, outline `#3a2a2a`), its sides notched and its foot a fringe of tongues
+(both varied by squad id), an ember sigil burnt into it — claws for blight-men, a jagged crack for trolls, a flame for
+drakes, a horned eye for the broodlord (the banners' kind mark, 02-look.md §9) — hung from a crooked branch on a crooked
+pole under a horned skull with ember eyes (the broodlord's a great bull's skull with ram's curls). Heights 1.6 (blight-men),
+2.4 (trolls, drakes: "beasts' +0.8"), 2.75 (the broodlord: the captain's 1.95 + 0.8). It leans and shakes with heart, is
+hidden while the company routs and grows when zoomed out, as a banner; it tatters by the same four stages (the fringe is
+eaten, the fly torn, holes beside the sigil, grime that spares the glow). Rank is a bone fang per rank hung from the
+branch's ends. No honour ribbons.
+**Why:** "ragged dark cloth on a crooked pole or antler/bone totem with an ember-glowing sigil (no fleur, no kind marks in
+cream)". A pale skull on a dark pole and an ember sigil read at zoom 9 against grass and against our cream-on-blue.
+**Spec:** 02-look.md §6.
+
+### Banner cloth on whole texels
+**Decision:** every banner and standard cloth is drawn at a whole number of art pixels per texel: below 14 px wide the far
+12×20 cloth at exactly 12 px; from 14 to 20 px the near 16×26 at exactly 16 px; above 20 px (zoom 34) its own 2/3 tile.
+While it hangs straight, its top-left corner is moved onto a whole pixel, so every pixel centre samples a texel's centre.
+Zooms 7–18 are unchanged (they were already 12 px); zoom 19 draws 12 px instead of 12.7, zoom 23 the near cloth at 16 px
+(was the far one at 15.3), zoom 28 16 px (was 18.7).
+**Why (measured, units lab, camera drift):** at zoom 19 the cloth's texel edges fell within float noise of pixel centres
+and 5 px of the drake standard's fringe flipped (Δ146) in 1–2 of 6 frames; the warband's gonfalons did the same (1 px,
+Δ28). With whole texels: 0 at zoom 19 for both.
+**Rejected:** leaving 19 and 23 at non-integer scales.
+**Spec:** 02-look.md §6, §9 "Never shimmer"; DECISIONS.md D-09 "Banner cloth".
+
+### The units lab's blight roster
+**Decision:** `__lab.roster('warband' | 'blight' | 'both')` (`?roster=`, default `both`: our warband in front of the
+blight). The blight row: blight-men with club (bare back), cleaver (with hide) and claws, a crowned leader, a troll with a
+club and one with a maul, a drake and a pack leader, the broodlord, and the four standards; slots are as wide as their
+bodies; ids are searched for the look each slot shows. The fight pose breathes the drakes (cycle offset per slot);
+`__lab.breath(e)` holds them `e` seconds into their cycle; a `back` pose walks everyone backwards facing ahead. The flicker
+check follows the roster's first figure.
+**Spec:** 02-look.md §10.
+
+### Left open
+- **Residual flicker at zooms 23–34 (1–4 px).** Camera and figure drift on the standing blight roster: 0 bad frames at
+  zooms 7–19; at 23 one pixel (Δ10) in 2–3 of 6 frames; at 28–34 one to four pixels, Δ1 (invisible) to Δ16 at 34. The
+  warband shows the same class in this browser (zoom 34: up to 5 px, Δ10). The zoom-34 ones were traced to the standard's
+  skull where horn and cranium intersect (BONE_DARK horns gave Δ24; the horns are now bone like the skull: Δ10). D-09's
+  0 was measured on another GPU; the remaining cause looks like the GPU's interpolation at the absolute pixel position
+  (plane equations) deciding near-ties of depth or colour.
+- Moving figures' shadows still re-rasterise at their edges (D-09's open item): figure drift with shadows on is 56–260
+  bad px per frame on the blight roster as on the warband.
+- The flame lights nothing at night (02-look.md §3 lights), and the blight lights no torches.
+- A tamed drake on our side (Myths) wears no harness in our colours.
+- The blight's hit flash is the men's white (02-look.md §5).

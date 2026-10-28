@@ -1,5 +1,5 @@
 import type { BattleView } from './battle/battle';
-import { SQUAD_F32, SQUAD_STATE, squadBits, KIND_ORDER } from './contracts';
+import { SQUAD_F32, SQUAD_STATE, squadBits, squadUnit, KIND_ORDER } from './contracts';
 import { FWD, PITCH, ZOOMS } from './view/camera';
 import { FOG_NEVER, FOG_SEEN, FOG_SIGHT } from './view/fog';
 import type { View } from './view/view';
@@ -64,7 +64,7 @@ function strays(a: Uint8Array, b: Uint8Array, w: number, h: number, s: { dx: num
 }
 
 export function installDev(view: View, battle: BattleView): void {
-  /** Each company: id, team, kind, state, men alive / full, morale (0..1 of max), anchor; and the outcome. */
+  /** Each company: id, team, kind, unit, state, men alive / full, morale (0..1 of max), anchor; and the outcome. */
   function battleState() {
     const sim = battle.sim;
     battle.views.refresh();
@@ -79,6 +79,7 @@ export function installDev(view: View, battle: BattleView): void {
         name: sim.squad_name(j),
         team: squadBits.team(w),
         kind: KIND_ORDER[squadBits.kind(w)],
+        unit: squadUnit(battle.views.squadUnit[j]),
         state: SQUAD_STATE[squadBits.state(w)],
         men: `${squadBits.alive(w)}/${squadBits.full(w)}`,
         morale: Math.round(f[o + SQUAD_F32.MORALE] * 100) / 100,

@@ -36,6 +36,7 @@ use crate::hash::Fnv;
 use crate::map::{self, BattleMap, MapKind, MapOpts, Tile, path};
 use crate::rng::jitter;
 use crate::tune::{KindSpec, Tune};
+use crate::units::Unit;
 
 pub const DT: f64 = 1.0 / TICK_HZ as f64;
 
@@ -101,8 +102,11 @@ pub struct Soldier {
     pub since_contact: f64,
     /// In contact (a foe in reach) or shooting this tick: the "share of men fighting".
     pub engaged: bool,
-    /// His heading, for beasts' turn limit.
+    /// His heading, for beasts' turn limit; a hunting breather keeps it on his prey.
     pub heading: f64,
+    /// A breather's hunt (04-battle.md §5 "Drake breath"): the tick his current cycle began (rear, jet, bite,
+    /// spring back), `Tick::MAX` when none runs. His prey is `target`.
+    pub cycle: Tick,
     route: Vec<P>,
     route_goal: P,
     route_at: Tick,
@@ -129,7 +133,10 @@ pub struct RideState {
 pub struct Squad {
     pub id: SquadId,
     pub team: Team,
+    /// The base kind the rules read (a broodlord is his side's captain, a troll a beast).
     pub kind: Kind,
+    /// Which unit the company is (04-battle.md §2 "Unit overrides"): the view draws by it.
+    pub unit: Unit,
     /// The commander's name; empty for a company without one.
     pub name: String,
     pub spec: KindSpec,
@@ -280,6 +287,41 @@ struct Strike {
     victim: usize,
     dmg: f64,
     charge: bool,
+    /// A breath pulse: its harm is flat, ignoring armour and every multiplier (§5 "Drake breath").
+    breath: bool,
+}
+
+/// Counts of what the blight's rules did, for the harness (AGENTS.md rule 4). Not state: never read by the rules
+/// and not hashed.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Tally {
+    /// Jets breathed (`Breath` events).
+    pub jets: u64,
+    /// Breath pulses that harmed a man, the harm, and the men they killed.
+    pub burns: u64,
+    pub burn_harm: f64,
+    pub burn_kills: u64,
+    /// Morale lost to breath, summed over companies.
+    pub scorch: f64,
+    /// Drake bites (blows struck at the bite of a cycle).
+    pub bites: u64,
+    /// Blows with `impact`: started, landed, and missed (the victim gone out of reach, or either man fallen).
+    pub impacts: u64,
+    pub landed: u64,
+    pub missed: u64,
+    /// Ticks a company pressed forward on a drake.
+    pub presses: u64,
+}
+
+/// A blow started but not yet landed (myth rule `impact`, §5): it lands at `lands` if its victim is still in
+/// reach, cleaving then.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Blow {
+    pub attacker: usize,
+    pub victim: usize,
+    pub dmg: f64,
+    pub charge: bool,
+    pub lands: Tick,
 }
 
 /// What each tick measures once for every squad (not state: recomputed from it).
@@ -294,6 +336,10 @@ struct Scratch {
     flanked: Vec<bool>,
     /// The foe squad a follower turns on to defend its captain (§3d), or an escort its ward.
     defend: Vec<Option<SquadId>>,
+    /// Morale each company loses to breath this tick (1.6·steadiness per pulse that catches it).
+    scorch: Vec<f64>,
+    /// Where each breather's prey stood at the tick's start, by squad: the spots its pack-mates have taken.
+    prey: Vec<Vec<(usize, P)>>,
 }
 
 pub struct Battle {
@@ -308,6 +354,9 @@ pub struct Battle {
     pub refusals: Vec<Refusal>,
     pub events: Vec<Event>,
     pub arrows: Vec<Arrow>,
+    /// Blows started and not yet landed (`impact`).
+    pub blows: Vec<Blow>,
+    pub tally: Tally,
     pub armies: [Army; 2],
     pub sites: Vec<SiteState>,
     /// Night has fallen (day 4 sets it; sight ×0.6 already reads it).
@@ -347,6 +396,8 @@ impl Battle {
             refusals: Vec::new(),
             events: Vec::new(),
             arrows: Vec::new(),
+            blows: Vec::new(),
+            tally: Tally::default(),
             sites,
             night: false,
             held: [false; 2],
@@ -547,6 +598,18 @@ impl Battle {
         }
         let i = if s.commanded { slot as usize - 1 } else { slot as usize };
         match s.how.shape {
+            Shape::Block if s.spec.pack => {
+                // A pack (§3a): files ×1.15, each rank's ends pushed back, and a fixed jitter per slot.
+                let pk = &self.tune.pack;
+                let (rank, file) = (i / f, i % f);
+                let in_rank = f.min(ranks_men.saturating_sub(rank * f)).max(1);
+                let end = in_rank > 1 && (file == 0 || file == in_rank - 1);
+                let id = (s.id as u32) << 16 | slot as u32;
+                let j = |salt: u32| (jitter(self.seed, id, salt) * 2.0 - 1.0) * pk.jitter;
+                let lateral = (file as f64 - (in_rank as f64 - 1.0) / 2.0) * gap * pk.files + j(SALT_PACK_X);
+                let back = rank as f64 * gap + if end { pk.ends_back } else { 0.0 } + j(SALT_PACK_Y);
+                anchor.offset(s.facing, -back, lateral)
+            }
             Shape::Block => {
                 let (rank, file) = (i / f, i % f);
                 let in_rank = f.min(ranks_men.saturating_sub(rank * f)).max(1);
@@ -575,6 +638,7 @@ impl Battle {
             f.u32(s.id as u32);
             f.u32(s.team as u32);
             f.u32(s.kind as u32);
+            f.u32(s.unit as u32);
             f.u32(s.state as u32);
             f.u32(s.detached as u32);
             f.u32(s.alive as u32);
@@ -589,6 +653,7 @@ impl Battle {
             f.u32(m.alive as u32);
             f.u32(m.slot as u32);
             f.u32(m.target.map_or(u32::MAX, |t| t as u32));
+            f.u32(m.cycle);
             for v in [m.x, m.y, m.vx, m.vy, m.pace, m.hp, m.cooldown] {
                 f.f64(v);
             }
@@ -597,6 +662,12 @@ impl Battle {
             f.u32(a.target as u32);
             f.f64(a.x);
             f.f64(a.y);
+        }
+        for w in &self.blows {
+            f.u32(w.attacker as u32);
+            f.u32(w.victim as u32);
+            f.u32(w.lands);
+            f.f64(w.dmg);
         }
         for s in &self.sites {
             f.u32(s.owner.map_or(9, |t| t as u32));
@@ -668,13 +739,25 @@ impl Battle {
         let detached = if s.detached { " detached" } else { "" };
         let queued = if s.queue.is_empty() { String::new() } else { format!(" +{} queued", s.queue.len()) };
         format!(
-            "{} {name} {:?} {}/{} ({:.1},{:.1}) face {:.2} {:?} morale {:.0} {order}{detached}{queued}",
-            s.id, s.kind, s.alive, s.full, s.x, s.y, s.facing, s.state, s.morale
+            "{} {name} {} {}/{} ({:.1},{:.1}) face {:.2} {:?} morale {:.0} {order}{detached}{queued}",
+            s.id,
+            s.unit.name(),
+            s.alive,
+            s.full,
+            s.x,
+            s.y,
+            s.facing,
+            s.state,
+            s.morale
         )
     }
 
-    /// The nearest open tile centre to `p` within the front's snap radius, or `p` if it is open.
+    /// The nearest open tile centre to `p` within the front's snap radius, or `p` if it is open. A point off the
+    /// map is first brought inside it (by the men's edge margin): a front's end or a station can fall outside, and
+    /// an anchor sent there walks off the map, where its men cannot follow and the cohesion gate holds it for good.
     pub(crate) fn open_near(&self, p: P) -> P {
+        let m = self.tune.movement.edge_margin;
+        let p = P::new(p.x.clamp(m, self.map.wf() - m), p.y.clamp(m, self.map.hf() - m));
         if self.walkable(p) {
             return p;
         }
@@ -772,3 +855,5 @@ const SALT_COOLDOWN: u32 = 102;
 const SALT_TARGET: u32 = 103;
 const SALT_SCATTER_X: u32 = 104;
 const SALT_SCATTER_Y: u32 = 105;
+const SALT_PACK_X: u32 = 106;
+const SALT_PACK_Y: u32 = 107;

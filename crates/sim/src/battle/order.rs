@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Battle, SquadState};
 use crate::contracts::{Kind, P, SquadId, Team, Tick, Way};
+use crate::units::Unit;
 
 /// The verb: what a squad is doing.
 #[derive(Clone, Debug, PartialEq)]
@@ -71,8 +72,10 @@ pub enum Stance {
 pub enum Priority {
     #[default]
     Nearest,
-    /// "their archers", "the drakes".
+    /// "their archers", "the horse".
     Kind { kind: Kind },
+    /// "the drakes", "the big ones" (trolls), "the blight-men": one unit (08-orders.md §4).
+    Unit { unit: Unit },
     /// Any company with range.
     Ranged,
     /// "the most shaken": lowest morale share.
@@ -258,6 +261,7 @@ impl Battle {
         match pri {
             Priority::Nearest => d,
             Priority::Kind { kind } => fav(f.kind == kind),
+            Priority::Unit { unit } => fav(f.unit == unit),
             Priority::Ranged => fav(f.spec.ranged()),
             Priority::Squad { id } => fav(f.id == id),
             Priority::Shaken => d + bonus * f.morale_share(),

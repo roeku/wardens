@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { BannerAtlas, ShieldAtlas } from './atlas';
+import { poseStandard } from './blight';
 import { PartPool } from './instances';
 import { figureUniforms } from './material';
-import { lookKey, outfit } from './outfit';
+import { formOf, lookKey, outfit } from './outfit';
 import { advance, poseBanner, poseMan, RIGS, type FigState, type RigCtx } from './rig';
+import { PARTS, type PartDef, type PartId } from './parts';
 import type { FigureFrame, ManRecord } from './types';
 
 export interface FiguresOpts {
@@ -48,16 +50,22 @@ export class Figures {
     for (const rec of f.men) {
       const st = this.state(rec);
       st.seen = this.frameNo;
-      const rig = rec.kind === 'beast' ? RIGS.beast : undefined;
-      if (rec.kind === 'beast' && !rig) {
-        this.warnOnce('beast', 'figures: no rig registered for beasts yet; they are not drawn');
+      // men are built in; the blight's bodies (and any other beast) pose through their registered rig
+      const form = st.look.form;
+      const rig = form === 'man' ? undefined : (RIGS[form] ?? RIGS.beast);
+      if (form !== 'man' && !rig) {
+        this.warnOnce(form, `figures: no rig registered for ${form}; not drawn`);
         continue;
       }
       advance(st, rec, f.dt, rig);
       if (rig) rig.pose(c, st, rec);
       else poseMan(c, st, rec);
     }
-    for (const b of f.banners ?? []) poseBanner(c, b);
+    for (const b of f.banners ?? []) {
+      const form = formOf({ unit: b.unit, kind: b.kind, team: b.team, captain: !!b.captain });
+      if (form === 'man') poseBanner(c, b);
+      else poseStandard(c, b, form);
+    }
     this.pool.end();
     for (const [id, st] of this.states) if (st.seen !== this.frameNo) this.states.delete(id);
   }
@@ -71,7 +79,7 @@ export class Figures {
   /** Turns every part's shadow casting on or off (the lab's check). */
   setCastShadow(on: boolean): void {
     this.group.traverse((o) => {
-      if (o instanceof THREE.InstancedMesh) o.castShadow = on && !o.name.match(/face|shieldFace|pennant|string|rein|chevron|ribbon/);
+      if (o instanceof THREE.InstancedMesh) o.castShadow = on && (PARTS[o.name.slice(4) as PartId] as PartDef | undefined)?.shadow !== false;
     });
   }
 

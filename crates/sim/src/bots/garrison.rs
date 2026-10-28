@@ -11,7 +11,7 @@
 //!    keep is threatened, or after 75 s.
 //! 7. Otherwise back to the post, or retake a lost site within 12 when no foe is within 6 of it.
 
-use super::{Memory, Orders, Seen, companies, nearest, seen};
+use super::{Memory, Orders, Seen, companies, nearest, quarry, seen};
 use crate::battle::{Battle, SquadState, line_spots};
 use crate::contracts::{Deed, P, SquadId, Team, Tick, Who};
 use crate::map::SiteKind;
@@ -127,7 +127,11 @@ pub(super) fn think(b: &Battle, team: Team, mem: &mut Memory, out: &mut Orders) 
                 continue;
             }
             let here = b.centre(i);
-            if let Some(f) = near.iter().min_by(|a, c| a.at.dist(here).total_cmp(&c.at.dist(here)).then(a.id.cmp(&c.id))) {
+            // Beasts choose by their own rule among the foes near the threat (§7 "Contact"): breathers by score,
+            // trolls the nearest foot; everyone else the nearest.
+            let close: Vec<Seen> = near.iter().map(|&f| f.clone()).collect();
+            let choice = quarry(b, i, &close, here).or_else(|| close.iter().min_by(|a, c| a.at.dist(here).total_cmp(&c.at.dist(here)).then(a.id.cmp(&c.id))));
+            if let Some(f) = choice {
                 busy.push(i);
                 first.get_or_insert(i);
                 attack(out, i, f);

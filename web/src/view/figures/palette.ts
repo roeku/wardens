@@ -53,6 +53,24 @@ export const REINS = 0x3a2618;
 export const POLE = 0x35231a;
 export const CROSSBAR = 0x56391f;
 
+// ---------------------------------------------------------------- the blight (00-start-here.md §A2)
+
+/** The blight's ramp, dark → light (07-progression.md §8, the corrupted ground): its flesh, hides and cloth. */
+export const BLIGHT = [0x3a2a2a, 0x4f3330, 0x6a3e36, 0x84503f] as const;
+/** The glowing cracks of the blight (07-progression.md §8): its eyes, veins and sigils. */
+export const EMBER = 0xc84a1c;
+/** Torch and fire, dark → light (02-look.md §3): the drakes' breath, and the ember's hot core. */
+export const FLAME = [0xd84a1c, 0xf07a22, 0xffb23a, 0xffe07a] as const;
+/** Bone: horns, claws, teeth, clubs and totems (the linen ramp's light steps, 02-look.md §4). */
+export const BONE = 0xd2c29c;
+export const BONE_DARK = 0xa8946c;
+/** Stone trolls' hide, dark → light (out/decisions-blight-view.md "Stone trolls"). */
+export const TROLL = [0x4a4650, 0x5e5966, 0x77727e] as const;
+/** The rags and hides the blight-men wear: leather, dark hair and coat browns (02-look.md §4). */
+export const HIDES = [0x5a3a22, 0x4a3020, 0x6b4a2a, 0x3e342c] as const;
+/** The broodlord's mane and the drakes' dark ridges (02-look.md §4 hair). */
+export const MANE = 0x2e241c;
+
 /** Grime on the last tatter stage multiplies the cloth. */
 export const GRIME = [0.72, 0.68, 0.62] as const;
 
