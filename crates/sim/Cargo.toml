@@ -1,0 +1,11 @@
+[package]
+name = "sim"
+description = "The rules of THE WARDENS: deterministic, headless, no I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libm = "0.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"

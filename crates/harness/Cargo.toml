@@ -1,0 +1,9 @@
+[package]
+name = "harness"
+description = "Headless harness: play, look, wait, undo and sweep, running the sim natively."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sim = { path = "../sim" }

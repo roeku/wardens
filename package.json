@@ -1,0 +1,19 @@
+{
+  "name": "wardens",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sim": "wasm-pack build crates/sim-wasm --target web --out-dir ../../web/src/sim-pkg --release",
+    "dev": "vite web",
+    "build": "npm run sim && tsc -p web && vite build web",
+    "typecheck": "tsc -p web"
+  },
+  "devDependencies": {
+    "@types/three": "^0.180.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.5"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  }
+}

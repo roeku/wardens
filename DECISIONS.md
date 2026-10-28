@@ -33,3 +33,14 @@ One entry per decision, newest at the bottom. Format:
 **Next (block D, voice-eval):** a compact grammar; warming the KV cache with the field state when the hold starts, so only the words need reading on release; the 8 examples; then try the DFlash drafter (`-md dflash-…gguf`, 1.6 GB) for speculative decoding. Expected local end-to-end is about 2–2.5 s, absorbed by time at ×0.3. Meeting the 1.2 s target needs the hosted GPU.
 **Rejected:** relying on the template's reasoning controls (they don't work); the 19.7 GB Q4_K_XL build (no speed gain, 3 GB more on a disk with about 20 GB free).
 **Spec:** docs/spec/06-voice.md §2, §9.
+
+## D-04 | 2026-10-28 | Repo layout and toolchain versions (day 1 block A)
+**Decision:**
+- One `package.json` at the repo root, with Vite's root at `web/` (`vite web`), so `npm run sim`, `npm run dev` and `npm run build` run from the root as `CLAUDE.md` and the README say. `web/` holds `index.html`, `vite.config.ts` and its own `tsconfig.json`.
+- Cargo workspace with resolver 3 and edition 2024. `Cargo.lock` and `package-lock.json` are committed, so the exact versions are pinned.
+- Versions: Rust 1.99, wasm-pack 0.15.0, wasm-bindgen 0.2 (0.2.129 at setup), serde 1, serde_json 1, libm 0.2; three ~0.180 (in `dependencies`, since it ships), @types/three ~0.180, vite 6.4, typescript 5.9; Node 22.
+- The harness gets `clap 4` and `image 0.25` in block B, when it first uses them. No unused dependencies.
+- `.claude/launch.json` starts the dev server on port 5173 for the browser preview.
+**Why:** matches ENGINE.md's architecture and the commands the repo's docs already name. Release WASM is 13.7 kB at this stage.
+**Rejected:** separate `web/package.json` (two install steps, and the documented commands would need a `cd`).
+**Spec:** docs/engine/ENGINE.md "Architecture", "Toolchain".
