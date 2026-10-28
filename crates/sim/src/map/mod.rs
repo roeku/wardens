@@ -359,4 +359,36 @@ mod tests {
         assert_ne!(a.hash(), generate(43, MapOpts::default()).hash());
         println!("map determinism: 3 maps hashed");
     }
+
+    /// D-13: where men stand (passable ground that is not a ford), the drawn ground is never under the water and
+    /// never lifted by a neighbouring crag. Sampled on a quarter-tile grid inside every such tile.
+    #[test]
+    fn dry_ground_is_drawn_dry_and_flat_by_crags() {
+        let (mut samples, mut wet, mut steep) = (0, 0, 0);
+        for kind in [MapKind::Keep, MapKind::Town, MapKind::Ford, MapKind::Field] {
+            for seed in 1..=12 {
+                let m = generate(seed, MapOpts { kind, width: 48 });
+                for y in 0..m.h as i32 {
+                    for x in 0..m.w as i32 {
+                        let i = m.idx(x, y).unwrap();
+                        if !m.tiles[i].passable() || m.ford[i] {
+                            continue;
+                        }
+                        let next_to_rock = (-1..=1).any(|dy| (-1..=1).any(|dx| m.tile(x + dx, y + dy) == Tile::Rock));
+                        for (u, v) in [(0.25, 0.25), (0.5, 0.5), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+                            let h = m.height_at(x as f64 + u, y as f64 + v);
+                            samples += 1;
+                            wet += (h < WATER_Y) as usize;
+                            // A crag's foot: open ground beside rock is not raised steeply above its own centre.
+                            let centre = m.height_at(x as f64 + 0.5, y as f64 + 0.5);
+                            steep += (next_to_rock && (h - centre).abs() > 0.6) as usize;
+                        }
+                    }
+                }
+            }
+        }
+        println!("dry ground: {samples} samples on 48 maps, {wet} under the water, {steep} on a crag's slope");
+        assert_eq!(wet, 0, "dry ground drawn under the water");
+        assert_eq!(steep, 0, "dry ground drawn on a crag");
+    }
 }

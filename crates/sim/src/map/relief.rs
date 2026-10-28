@@ -15,6 +15,10 @@ const MASK_FORD: f64 = 1.0;
 const MASK_ROCK: f64 = 0.8;
 const MASK_WOOD: f64 = 1.5;
 const PAD_BLEND: f64 = 1.5;
+/// Dry ground stays this far above the water (03-land.md §3d step 3).
+const LAND_ABOVE_WATER: f64 = 0.08;
+/// A sample on the edge between water and dry ground sits just above the waterline.
+const BANK_ABOVE_WATER: f64 = 0.02;
 
 pub(super) fn apply(m: &mut BattleMap, main: P) {
     let mut rng = relief_rng(m);
@@ -123,9 +127,40 @@ impl Masks {
     }
 }
 
-/// The raw height at `p`, before the pads (§3d step 3).
+/// The tiles a height sample touches (1, 2 or 4: those whose closed square holds it), as the rules see them.
+struct Touch {
+    water: bool,
+    ford: bool,
+    /// Passable ground that is not a ford: where men stand.
+    dry: bool,
+    all_rock: bool,
+}
+
+impl Touch {
+    fn at(m: &BattleMap, p: P) -> Touch {
+        let cells = |v: f64| if v == v.floor() { [v as i32 - 1, v as i32] } else { [v.floor() as i32; 2] };
+        let mut t = Touch { water: false, ford: false, dry: false, all_rock: true };
+        for y in cells(p.y) {
+            for x in cells(p.x) {
+                let Some(i) = m.idx(x, y) else { continue };
+                let tile = m.tiles[i];
+                t.water |= tile == Tile::Water;
+                t.ford |= m.ford[i];
+                t.dry |= tile.passable() && !m.ford[i];
+                t.all_rock &= tile == Tile::Rock;
+            }
+        }
+        t
+    }
+}
+
+/// The raw height at `p`, before the pads (§3d step 3), made to agree with the rules' tiles (DECISIONS.md D-13):
+/// the masks still shape the land, but a crag rises only from samples wholly on rock, dry ground never sinks under
+/// the water, and a bank sample sits at the waterline. Men walk only where the rules let them, so they are never
+/// drawn standing in the river or up a crag.
 fn raw(m: &BattleMap, masks: &Masks, p: P) -> f64 {
     let s = m.seed;
+    let touch = Touch::at(m, p);
     let mut h = (fbm(s.wrapping_add(1), p.x * 0.06, p.y * 0.06, 1) - 0.5) * 0.5;
     for hill in &m.hills {
         let t = p.dist(hill.at) / hill.r;
@@ -136,7 +171,7 @@ fn raw(m: &BattleMap, masks: &Masks, p: P) -> f64 {
     }
     let (water, ford) = (masks.read(&masks.water, p), masks.read(&masks.ford, p));
     let (rock, wood) = (masks.read(&masks.rock, p), masks.read(&masks.wood, p));
-    if rock > 0.15 {
+    if rock > 0.15 && touch.all_rock {
         h += (rock - 0.15) * (2.3 + fbm(s.wrapping_add(4), p.x * 0.5, p.y * 0.5, 4) * 1.4);
     }
     h += wood * 0.12;
@@ -144,8 +179,10 @@ fn raw(m: &BattleMap, masks: &Masks, p: P) -> f64 {
     if ford > 0.45 {
         h = h.min(WATER_Y - 0.05);
     }
-    if water < 0.02 && ford < 0.02 {
-        h = h.max(WATER_Y + 0.08);
+    if (water < 0.02 && ford < 0.02) || (!touch.water && !touch.ford) {
+        h = h.max(WATER_Y + LAND_ABOVE_WATER);
+    } else if touch.dry {
+        h = h.max(WATER_Y + BANK_ABOVE_WATER);
     }
     h
 }

@@ -838,3 +838,21 @@ Choices made where the spec is silent, for the live battle view: `crates/sim-was
 **Decision:** the frame loop times the sim step, the record build, the figures' update and the render submission; `__v.bench({frames, dt, w, h})` runs frames back to back at a given window size and waits for the GPU after each (a 1-pixel read), so it also measures when the page gets no animation frames (a hidden pane).
 **Why:** CPU stage times alone hide the GPU; the pane the agent drives is often hidden, where requestAnimationFrame does not run.
 **Spec:** 01-flow.md §8 "Performance".
+
+## D-13 | 2026-10-28 | The drawn ground agrees with the rules' tiles: no men in the river or up a crag
+**Decision:** the §3d relief still shapes the land with its masks, but each half-tile height sample now checks which tiles it actually touches (1, 2 or 4):
+- A crag rises only from samples wholly on rock.
+- Dry ground (passable, not a ford) never sinks under the water.
+- A sample on the edge between water or a ford and dry ground sits just above the waterline (+0.02).
+
+Fords stay shallow water that men wade, on the ford's own tiles.
+**Why:** the masks spread about a tile past their tiles. Water carved into dry ground beside the river, and crags lifted the open ground beside the rock, so men walking where the rules allow were drawn standing in the river or half-way up a crag (D-08, D-12). Measured over 48 maps (keep, town, ford and field, seeds 1–12), 290,275 samples inside dry tiles:
+- **Before:** 5,450 under the water and 1,315 on a crag's slope.
+- **After:** 0 and 0. The new test `dry_ground_is_drawn_dry_and_flat_by_crags` holds it.
+
+The river now draws at the rules' width, and crags stand as steep blocks on their own rock.
+**Effect on the rules:** heights feed range, melee and sight, so the golden hashes (replay, field, land) are regenerated deliberately; native and WASM agree.
+- **Gates re-run:** charge vs general1 47.0% over 300 seeds; jitter 0.016 per man-second and 7.0 flips per squad-minute.
+- **Doing nothing** still wins 0% against general0, 1.0% against general1 and 0.3% against general2 (300 seeds each), as in D-11.
+**Rejected:** making the tiles follow the drawn relief (it would widen the rules' river and move every path); hiding the problem in the view by lowering the water plane.
+**Spec:** 03-land.md §3d step 3.
