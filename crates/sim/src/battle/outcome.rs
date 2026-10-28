@@ -105,13 +105,19 @@ impl Battle {
         }
         let o = &self.tune.outcome;
         let day = o.battle_s * self.map.wf() / o.width_base;
+        let night_s = o.night_s;
         let tick = |s: f64| (s * crate::contracts::TICK_HZ as f64).round() as crate::contracts::Tick;
         if self.tick == tick(day * 0.8) {
             self.event(EventCode::DuskBell, self.map.deploy[0], 0, 0);
         }
-        if !self.night && self.tick >= tick(day) {
+        if !self.night && !self.dawn && self.tick >= tick(day) {
             self.night = true;
             self.event(EventCode::Nightfall, self.map.deploy[0], 0, 0);
+        }
+        // Dawn ends the night (the battle's own outcome is reckoned in step 12); `When::Dawn` reads it.
+        if self.night && self.tick >= tick(day + night_s) {
+            self.night = false;
+            self.dawn = true;
         }
     }
 

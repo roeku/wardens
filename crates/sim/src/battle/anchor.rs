@@ -89,6 +89,8 @@ impl Battle {
             let a = self.tune.army.clone();
             let near = self.enemy_seen_within(team, at, a.line_enemy);
             let marching = self.squads[c].state == SquadState::Marching;
+            // Double time marches in column at once (08-orders.md §5 "pace").
+            let double = self.squads[c].how.pace == Some(super::Pace::Double);
             let army = &mut self.armies[team as usize];
             if at.dist(army.aim_from) >= a.reaim_moved {
                 let new = atan2(at.y - army.aim_from.y, at.x - army.aim_from.x);
@@ -102,7 +104,7 @@ impl Battle {
             army.marched = if marching && !near { army.marched + DT } else { 0.0 };
             if near || army.halted >= a.line_halt_s {
                 army.formation = Formation::Line;
-            } else if army.marched >= a.column_after_s {
+            } else if army.marched >= a.column_after_s || (double && marching) {
                 army.formation = Formation::Column;
             }
         }
@@ -126,7 +128,11 @@ impl Battle {
         let s = &self.squads[i];
         let cap = self.captain_at(s.team)?;
         let army = &self.armies[s.team as usize];
-        let (ahead, left) = if army.formation == Formation::Line { s.station } else { s.column };
+        let (ahead, left) = match (army.formation, s.reserve) {
+            (Formation::Line, Some(r)) => r,
+            (Formation::Line, None) => s.station,
+            (Formation::Column, _) => s.column,
+        };
         Some(cap.offset(army.heading, ahead, left))
     }
 
@@ -162,12 +168,17 @@ impl Battle {
             }
         }
         let mv = self.tune.movement.clone();
-        let speed = self.squads[i].speed(&self.tune) * self.squads[i].how.pace.unwrap_or(1.0);
+        let speed = self.squads[i].speed(&self.tune) * self.pace_k(i);
+        if !matches!(self.squads[i].order, Order::Hold { .. }) {
+            // Out of a fight and not holding, the post a defensive stance keeps to travels with the company.
+            let s = &mut self.squads[i];
+            s.post = P::new(s.x, s.y);
+        }
         if let Some(foe) = self.scratch.defend[i]
-            && !matches!(self.squads[i].order, Order::Follow | Order::Guard { .. })
+            && !matches!(self.squads[i].order, Order::Follow | Order::Guard { .. } | Order::Screen { .. })
         {
-            // Defending the captain: turn on the foe that came within 3 of him.
-            let goal = self.centre(foe as usize);
+            // Defending the captain: turn on the foe that came within 3 of him (a defensive stance on its leash).
+            let goal = self.leashed(i, self.centre(foe as usize));
             self.walk(i, goal, speed, true, Facing::Step);
             self.squads[i].state = SquadState::Marching;
             return;
@@ -247,7 +258,91 @@ impl Battle {
                 }
             }
             Order::Ride => self.ride(i),
+            Order::Screen { ward, from } => self.screen(i, ward as usize, from),
+            Order::Charge { target } => {
+                let t = target as usize;
+                let pursue = self.rules(i).pursue;
+                if !self.squads.get(t).is_some_and(|t| t.on_field() && (pursue || t.state != SquadState::Routing)) {
+                    self.arrive(i, None);
+                    return;
+                }
+                // Reckless: straight at the foe, the cohesion gate ignored (08-orders.md §3 "charge").
+                let goal = self.centre(t);
+                self.walk(i, goal, speed, false, Facing::Step);
+                self.squads[i].state = SquadState::Marching;
+            }
+            Order::Withdraw { to } => self.withdraw(i, to, speed),
+            Order::Regroup { to } => {
+                if self.walk_order(i, to, mv.arrive_at, speed) {
+                    let s = &self.squads[i];
+                    let face = self.nearest_foe(i, self.tune.orders.screen_r).map(|f| atan2(f.y - s.y, f.x - s.x));
+                    self.arrive(i, face);
+                }
+            }
+            Order::Build { work, at } => self.build_step(i, work, at, speed),
         }
+    }
+
+    /// `goal` kept within a defensive stance's leash of its post.
+    fn leashed(&self, i: usize, goal: P) -> P {
+        match self.rules(i).leash {
+            Some((post, r)) if goal.dist(post) > r => {
+                let d = goal.dist(post);
+                P::new(post.x + (goal.x - post.x) * r / d, post.y + (goal.y - post.y) * r / d)
+            }
+            _ => goal,
+        }
+    }
+
+    /// Withdraw (08-orders.md §3): step back to `to` at `withdraw_pace`, the block still facing the nearest foe;
+    /// its men strike in passing. A company with the army falls in again when there.
+    fn withdraw(&mut self, i: usize, to: P, speed: f64) {
+        let o = self.tune.orders.clone();
+        let here = P::new(self.squads[i].x, self.squads[i].y);
+        let c = self.centre(i);
+        let face = self.nearest_foe(i, o.screen_r).map_or(self.squads[i].facing, |f| atan2(f.y - c.y, f.x - c.x));
+        if here.dist(to) <= self.tune.movement.arrive_at {
+            if self.squads[i].detached || self.squads[i].kind == Kind::Captain {
+                self.arrive(i, Some(face));
+            } else {
+                let s = &mut self.squads[i];
+                s.order = Order::Follow;
+                s.done = true;
+                s.following = true;
+            }
+            return;
+        }
+        let gate = self.squads[i].kind != Kind::Captain;
+        self.walk(i, to, speed * o.withdraw_pace, gate, Facing::Fixed(face, self.tune.combat.face_rate));
+        self.squads[i].state = SquadState::Marching;
+    }
+
+    /// Screen (08-orders.md §3 "screen / cover"): stand `screen_d` from the ward toward `from` (or the nearest foe
+    /// to the ward, or the threat point), facing it; turn on anything that comes within `guard_r` of the ward.
+    fn screen(&mut self, i: usize, ward: usize, from: Option<crate::contracts::SquadId>) {
+        if !self.squads.get(ward).is_some_and(|w| w.on_field()) {
+            self.arrive(i, None);
+            return;
+        }
+        if let Some(foe) = self.scratch.defend[i] {
+            let goal = self.centre(foe as usize);
+            let speed = self.squads[i].speed(&self.tune);
+            self.walk(i, goal, speed, true, Facing::Step);
+            self.squads[i].state = SquadState::Marching;
+            return;
+        }
+        let o = self.tune.orders.clone();
+        let wc = self.centre(ward);
+        let team = self.squads[i].team;
+        let threat = from
+            .filter(|&f| self.squads.get(f as usize).is_some_and(|s| s.on_field()))
+            .map(|f| self.centre(f as usize))
+            .or_else(|| self.nearest_foe(ward, o.screen_r))
+            .unwrap_or_else(|| self.threat_point(team, wc));
+        let d = wc.dist(threat);
+        let dir = if d > 1e-9 { P::new((threat.x - wc.x) / d, (threat.y - wc.y) / d) } else { P::from_angle(self.squads[ward].facing) };
+        let goal = P::new(wc.x + dir.x * o.screen_d, wc.y + dir.y * o.screen_d);
+        self.keep_by(i, goal, atan2(dir.y, dir.x));
     }
 
     /// The anchor of a move, attack or take: drop via points within 0.9, walk the A* path at `speed` (the
@@ -264,11 +359,6 @@ impl Battle {
         let final_leg = self.squads[i].order.via().is_empty();
         if final_leg && here.dist(goal) <= arrive {
             return true;
-        }
-        if self.held[self.squads[i].team as usize] && self.squads[i].kind != Kind::Captain {
-            // 08-orders.md §8 hook: held before contact, nobody advances.
-            self.squads[i].state = SquadState::Idle;
-            return false;
         }
         let gate = self.squads[i].kind != Kind::Captain;
         self.walk(i, goal, speed, gate, Facing::Step);
@@ -293,9 +383,26 @@ impl Battle {
 
     /// Moves the anchor one tick toward `goal` along its A* path (replanned every second, or when the goal moves
     /// more than 1.5): `step = speed · terrain · hill pace · gate · dt` (§3b).
+    /// A held start (08-orders.md §8): no anchor goes further than `held_depth` from its deploy point toward the
+    /// enemy's until "advance".
+    pub(super) fn held_clamp(&self, team: Team, goal: P) -> P {
+        if !self.held[team as usize & 1] {
+            return goal;
+        }
+        let (own, foe) = (self.map.deploy[team as usize & 1], self.map.deploy[1 - (team as usize & 1)]);
+        let d = own.dist(foe);
+        if d < 1e-9 {
+            return goal;
+        }
+        let a = P::new((foe.x - own.x) / d, (foe.y - own.y) / d);
+        let ahead = (goal.x - own.x) * a.x + (goal.y - own.y) * a.y;
+        let over = ahead - self.tune.orders.held_depth;
+        if over > 0.0 { P::new(goal.x - a.x * over, goal.y - a.y * over) } else { goal }
+    }
+
     pub(super) fn walk(&mut self, i: usize, goal: P, speed: f64, gate: bool, facing: Facing) {
         let mv = self.tune.movement.clone();
-        let goal = self.open_near(goal);
+        let goal = self.open_near(self.held_clamp(self.squads[i].team, goal));
         let here = P::new(self.squads[i].x, self.squads[i].y);
         let replan_ticks = (mv.replan_s / DT).round() as u32;
         let s = &self.squads[i];
@@ -344,6 +451,9 @@ impl Battle {
     /// it together) until its front rank stands in reach of the nearest drake. A defensive stance keeps it within
     /// the leash of its post.
     fn fight_anchor(&mut self, i: usize) {
+        if self.skirmish_back(i) {
+            return;
+        }
         let c = self.tune.combat.clone();
         let t = self.squads[i].threat.expect("engaged") as usize;
         let foe = self.centre(t);
@@ -373,6 +483,44 @@ impl Battle {
             s.x = nx;
             s.y = ny;
         }
+    }
+
+    /// Skirmish (08-orders.md §5): a ranged company with a melee foe man within `skirmish_r` of any of its men
+    /// falls back, still facing him, to `skirmish_r + 1` from him; its men keep shooting. True when it stepped.
+    fn skirmish_back(&mut self, i: usize) -> bool {
+        let Some(sk) = self.rules(i).skirmish else { return false };
+        let s = &self.squads[i];
+        if !s.spec.ranged() {
+            return false;
+        }
+        let team = s.team;
+        let mut near: Option<(f64, P, P)> = None;
+        for &k in &s.soldiers {
+            let m = &self.soldiers[k];
+            if !m.alive {
+                continue;
+            }
+            self.grid.visit(m.pos(), sk, |j| {
+                let o = &self.soldiers[j];
+                let os = &self.squads[o.squad as usize];
+                let d = m.pos().dist(o.pos());
+                if os.team != team && !os.spec.ranged() && os.standing() && d <= sk && near.is_none_or(|(b, _, _)| d < b) {
+                    near = Some((d, m.pos(), o.pos()));
+                }
+            });
+        }
+        let Some((d, ours, foe)) = near else { return false };
+        let c = self.centre(i);
+        let dc = c.dist(foe).max(1e-9);
+        let away = P::new((c.x - foe.x) / dc, (c.y - foe.y) / dc);
+        let back = sk - d + 1.0;
+        let here = P::new(self.squads[i].x, self.squads[i].y);
+        let goal = P::new(here.x + away.x * back, here.y + away.y * back);
+        let face = atan2(foe.y - ours.y, foe.x - ours.x);
+        let speed = self.squads[i].speed(&self.tune);
+        self.walk(i, goal, speed, false, Facing::Fixed(face, self.tune.combat.face_rate));
+        self.squads[i].state = SquadState::Fighting;
+        true
     }
 
     /// Meeting a drake (§5): the anchor's next point, one step toward the drake nearest it until the front rank
@@ -405,7 +553,7 @@ impl Battle {
         } else {
             0.0
         };
-        let step = (s.speed(&self.tune) * s.how.pace.unwrap_or(1.0) * self.ground_pace(here, dir) * gate * DT).min(d - stand);
+        let step = (s.speed(&self.tune) * s.how.pace_k(&self.tune) * self.ground_pace(here, dir) * gate * DT).min(d - stand);
         let next = P::new(here.x + dir.x * step, here.y + dir.y * step);
         self.walkable(next).then_some(next)
     }
@@ -450,7 +598,7 @@ impl Battle {
         if self.looseness(i) > a.follow_loose {
             speed *= a.follow_loose_pace;
         }
-        speed *= self.squads[i].how.pace.unwrap_or(1.0);
+        speed *= self.pace_k(i);
         self.walk(i, goal, speed, true, Facing::Fixed(heading, a.follower_turn));
         self.squads[i].state = SquadState::Marching;
     }
@@ -469,10 +617,16 @@ impl Battle {
             self.squads[i].state = SquadState::Marching;
             return;
         }
-        let a = self.tune.army.clone();
         let w = &self.squads[ward];
-        let goal = self.centre(ward).offset(w.facing, -a.guard_behind, 0.0);
+        let goal = self.centre(ward).offset(w.facing, -self.tune.army.guard_behind, 0.0);
         let heading = w.facing;
+        self.keep_by(i, goal, heading);
+    }
+
+    /// Keeps station at a moving `goal` (an escort's or a screen's) with the followers' hysteresis and speed law,
+    /// facing `heading`.
+    fn keep_by(&mut self, i: usize, goal: P, heading: f64) {
+        let a = self.tune.army.clone();
         let here = P::new(self.squads[i].x, self.squads[i].y);
         let d = here.dist(goal);
         let s = &mut self.squads[i];
@@ -486,7 +640,7 @@ impl Battle {
             s.facing = turn(s.facing, heading, a.follower_turn * DT);
             return;
         }
-        let speed = (s.speed(&self.tune) * a.follow_far_pace).min(a.follow_base + a.follow_k * d);
+        let speed = (s.speed(&self.tune) * a.follow_far_pace * s.how.pace_k(&self.tune)).min(a.follow_base + a.follow_k * d);
         self.walk(i, goal, speed, true, Facing::Fixed(heading, a.follower_turn));
         self.squads[i].state = SquadState::Marching;
     }
@@ -498,11 +652,11 @@ impl Battle {
         let team = self.squads[c].team;
         let followers: Vec<usize> =
             (0..self.squads.len()).filter(|&j| self.squads[j].team == team && self.squads[j].standing() && self.squads[j].order == Order::Follow).collect();
-        let own = self.squads[c].speed(&self.tune);
+        let own = self.squads[c].speed(&self.tune) * self.pace_k(c);
         if followers.is_empty() {
             return own;
         }
-        let slowest = followers.iter().map(|&j| self.squads[j].speed(&self.tune)).fold(f64::INFINITY, f64::min);
+        let slowest = followers.iter().map(|&j| self.squads[j].speed(&self.tune) * self.pace_k(j)).fold(f64::INFINITY, f64::min);
         let column = self.armies[team as usize].formation == Formation::Column;
         let err = followers.iter().map(|&j| self.station_at(j).map_or(0.0, |p| p.dist(P::new(self.squads[j].x, self.squads[j].y)))).sum::<f64>()
             / followers.len() as f64;

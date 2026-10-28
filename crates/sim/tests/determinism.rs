@@ -1,7 +1,9 @@
 //! Replays the fixtures and compares their hashes with the golden files. `replay.json` (a keep battle against the
 //! blight's nest, the garrison bot playing team 1 beside logged orders, long enough for drake breath, the block
 //! pressing on it and troll impact blows) is checked in WASM too (crates/sim-wasm/tests/determinism.rs): native and
-//! WASM must both produce it. `field.json` (the charge bot against general2 and the blight on the open field) and
+//! WASM must both produce it. `orders.json` (the order language, 08-orders: a held start, ways, waits on a signal,
+//! a condition and a "then", a bridge and stakes built and torn down, a reserve committed, charge, withdraw, guard,
+//! screen and face, against the garrison bot) is checked in WASM too (crates/sim-wasm/tests/orders.rs). `field.json` (the charge bot against general2 and the blight on the open field) and
 //! `mirror.json` (the same against the day-3 human field, `Setup::mirror`) are checked natively. After a deliberate
 //! rule change, rewrite them with `UPDATE_GOLDEN=1 cargo test -p sim --test determinism`.
 
@@ -14,6 +16,8 @@ const FIELD: &str = include_str!("fixtures/field.json");
 const FIELD_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/field.hashes");
 const MIRROR: &str = include_str!("fixtures/mirror.json");
 const MIRROR_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mirror.hashes");
+const ORDERS: &str = include_str!("fixtures/orders.json");
+const ORDERS_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/orders.hashes");
 const EVERY: u32 = 300;
 
 fn check(replay: &str, golden: &str) -> usize {
@@ -74,4 +78,28 @@ fn replay_repeats_and_survives_json() {
     // Team 1 has its general since day 3, so its army order at tick 1400 is obeyed.
     assert!(why.contains(&"no squad 9 of ours"), "{why:?}");
     println!("replay: 2 runs agree, {logged} commands logged and {by_bot} by the bot, {} refused", a.refusals.len());
+}
+
+#[test]
+fn the_order_language_replay_matches_the_golden_hashes() {
+    let n = check(ORDERS, ORDERS_GOLDEN);
+    let r = Replay::from_json(ORDERS).unwrap();
+    assert!(r.held, "a held start");
+    let b = r.run().unwrap();
+    let t = &b.tally;
+    // What the replay exercises: works built and torn down, waits released, a refusal or two, the held start ended.
+    assert!(t.built >= 1 && t.razed >= 1, "{t:?}");
+    assert_eq!(b.held, [false, false], "advanced");
+    let ours = |name: &str| b.squads.iter().find(|s| s.name == name).unwrap();
+    assert_eq!(ours("REN").how.stance, sim::battle::Stance::Skirmish);
+    println!(
+        "native orders replay: {n} hashes match; {} commands ({} refused), works built {} razed {} ({:.0} harm), {} arrows; outcome {:?}",
+        b.log.iter().filter(|c| c.team == 0).count(),
+        b.refusals.len(),
+        t.built,
+        t.razed,
+        t.raze_harm,
+        t.arrows,
+        b.outcome()
+    );
 }

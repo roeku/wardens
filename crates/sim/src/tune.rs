@@ -874,6 +874,167 @@ impl Default for StanceTune {
     }
 }
 
+/// The order language's verbs and modifiers (08-orders.md §3, §5, §8; all chosen, out/decisions-orders-sim.md).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct OrdersTune {
+    /// Pace as a share of the company's speed: walk, quick (the spec's own pace), double time.
+    pub pace_walk: f64,
+    pub pace_quick: f64,
+    pub pace_double: f64,
+    /// `line` and `shield wall` stand this many ranks deep; `column` this many files wide.
+    pub line_ranks: u16,
+    pub column_files: u16,
+    /// Withdraw: step back this far from the nearest foe when no point is given, at this share of the pace,
+    /// facing the foe at the anchor's fighting turn rate.
+    pub withdraw_d: f64,
+    pub withdraw_pace: f64,
+    /// Regroup: this far behind the line, away from the threat.
+    pub regroup_back: f64,
+    /// Screen: stand this far from the ward toward the threat; look for the threat this far from the ward.
+    pub screen_d: f64,
+    pub screen_r: f64,
+    /// The reserve's station: this far behind the captain (behind the bows), `army.reserve_side` to the side.
+    pub reserve_behind: f64,
+    /// Commit without a target: the best foe by priority within this of the company.
+    pub commit_r: f64,
+    /// A held start (08-orders.md §8): nobody's anchor goes further than this from its deploy point toward the
+    /// enemy until "advance".
+    pub held_depth: f64,
+    /// A withdrawal or regroup point stays this far inside the map's sides (half that from the top and bottom).
+    pub edge_keep: f64,
+}
+
+impl Default for OrdersTune {
+    fn default() -> OrdersTune {
+        OrdersTune {
+            pace_walk: 0.6,
+            pace_quick: 1.0,
+            pace_double: 1.4,
+            line_ranks: 2,
+            column_files: 2,
+            withdraw_d: 6.0,
+            withdraw_pace: 0.6,
+            regroup_back: 6.0,
+            screen_d: 3.0,
+            screen_r: 24.0,
+            reserve_behind: 6.5,
+            commit_r: 24.0,
+            held_depth: 8.0,
+            edge_keep: 3.0,
+        }
+    }
+}
+
+/// How a mod changes the value it names (07-progression.md §9 `Mod`).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Op {
+    Mul,
+    Add,
+    Set,
+}
+
+/// One effect of a field work, in 07-progression.md §9's mod form `{path, op, v}`: the work's hooks read the mods
+/// by `path` (`charge`, `charge_taken`, `arrow_taken`, `sight`, `range`) and apply them to the men it covers.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Mod {
+    pub path: String,
+    pub op: Op,
+    pub v: f64,
+}
+
+impl Mod {
+    pub fn apply(&self, x: f64) -> f64 {
+        match self.op {
+            Op::Mul => x * self.v,
+            Op::Add => x + self.v,
+            Op::Set => self.v,
+        }
+    }
+}
+
+/// A field work as data (08-orders.md §7): `{id, work_s, footprint, hp, mods, blocks}`; the id is its key in
+/// `WorksTune`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorkSpec {
+    /// Seconds one company works to build it.
+    pub work_s: f64,
+    /// Tiles along its line and across it (a bridge: its width, and the longest span it may cross).
+    pub footprint: [f64; 2],
+    pub hp: f64,
+    pub mods: Vec<Mod>,
+    /// Built, its tiles are impassable.
+    pub blocks: bool,
+}
+
+impl WorkSpec {
+    /// `x` with every mod named `path` applied, in order.
+    pub fn modded(&self, path: &str, x: f64) -> f64 {
+        self.mods.iter().filter(|m| m.path == path).fold(x, |x, m| m.apply(x))
+    }
+}
+
+/// The field works table and how works are built, covered and torn down (08-orders.md §7). The stakes' 0.4 and
+/// lost charge bonus, and the tower's +3 sight and +1.2 range, are the spec's; the rest is chosen.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorksTune {
+    pub stakes: WorkSpec,
+    pub barricade: WorkSpec,
+    pub bridge: WorkSpec,
+    pub watchtower: WorkSpec,
+    /// Builders stand this far behind the work's back edge (a bridge's: beyond its near bank).
+    pub stand_off: f64,
+    /// A builder's anchor works within this of its spot.
+    pub build_at: f64,
+    /// Stakes and barricades cover men up to this far behind them.
+    pub cover_behind: f64,
+    /// A company mans a tower with its centre within this of it.
+    pub man_r: f64,
+    /// A foe man with no foe to strike tears at a work in his reach: his damage ×this per blow.
+    pub raze: f64,
+}
+
+impl Default for WorksTune {
+    fn default() -> WorksTune {
+        let m = |path: &str, op: Op, v: f64| Mod { path: path.into(), op, v };
+        WorksTune {
+            stakes: WorkSpec {
+                work_s: 8.0,
+                footprint: [4.0, 1.0],
+                hp: 40.0,
+                mods: vec![m("charge", Op::Set, 1.0), m("charge_taken", Op::Mul, 0.4)],
+                blocks: false,
+            },
+            barricade: WorkSpec { work_s: 12.0, footprint: [3.0, 1.0], hp: 80.0, mods: vec![m("arrow_taken", Op::Mul, 0.5)], blocks: true },
+            bridge: WorkSpec { work_s: 20.0, footprint: [2.0, 10.0], hp: 120.0, mods: Vec::new(), blocks: false },
+            watchtower: WorkSpec {
+                work_s: 15.0,
+                footprint: [1.5, 1.5],
+                hp: 100.0,
+                mods: vec![m("sight", Op::Add, 3.0), m("range", Op::Add, 1.2)],
+                blocks: false,
+            },
+            stand_off: 1.2,
+            build_at: 1.0,
+            cover_behind: 2.5,
+            man_r: 1.8,
+            raze: 1.0,
+        }
+    }
+}
+
+impl WorksTune {
+    pub fn get(&self, w: crate::contracts::Work) -> &WorkSpec {
+        use crate::contracts::Work;
+        match w {
+            Work::Stakes => &self.stakes,
+            Work::Barricade => &self.barricade,
+            Work::Bridge => &self.bridge,
+            Work::Watchtower => &self.watchtower,
+        }
+    }
+}
+
 /// The garrison policy (04-battle.md §7 "Garrison").
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GarrisonTune {
@@ -1041,6 +1202,10 @@ pub struct Tune {
     pub sight: SightTune,
     pub outcome: OutcomeTune,
     pub stance: StanceTune,
+    #[serde(default)]
+    pub orders: OrdersTune,
+    #[serde(default)]
+    pub works: WorksTune,
     pub bots: BotTune,
 }
 

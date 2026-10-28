@@ -57,6 +57,23 @@ pub fn top_down(b: &Battle) -> RgbImage {
         square(&mut img, s.at, half, INK);
         square(&mut img, s.at, half - 1, colour);
     }
+    // Field works (08-orders §7): the footprint in its side's colour, filled as far as it is built; razed ones dark.
+    for w in &b.works {
+        let colour = if w.razed { FALLEN } else if w.built >= 1.0 { TEAM_LIGHT[w.team as usize & 1] } else { NEUTRAL };
+        let f = P::from_angle(w.face);
+        let left = P::new(f.y, -f.x);
+        let (half_l, half_d) = (w.size[0] / 2.0, w.size[1] / 2.0);
+        let steps = 8;
+        for j in 0..=steps {
+            let a = -half_d + w.size[1] * j as f64 / steps as f64;
+            if (j as f64 / steps as f64) > w.built.max(0.15) && !w.razed && w.built < 1.0 {
+                continue;
+            }
+            let c = P::new(w.at.x + f.x * a, w.at.y + f.y * a);
+            line(&mut img, P::new(c.x - left.x * half_l, c.y - left.y * half_l), P::new(c.x + left.x * half_l, c.y + left.y * half_l), colour);
+        }
+        line(&mut img, P::new(w.at.x - f.x * half_d, w.at.y - f.y * half_d), P::new(w.at.x + f.x * (half_d + 0.6), w.at.y + f.y * (half_d + 0.6)), INK);
+    }
     for k in b.soldiers.iter().filter(|k| !k.alive && k.died_at != Tick::MAX) {
         square(&mut img, P::new(k.x, k.y), 1, FALLEN);
     }
@@ -71,7 +88,10 @@ pub fn top_down(b: &Battle) -> RgbImage {
             Order::Attack { target, .. } => b.squads.get(*target as usize).map(|_| (b.centre(*target as usize), ATTACK)),
             Order::Take { site, .. } => m.sites.get(*site as usize).map(|t| (t.at, GOLD)),
             Order::Follow | Order::Recall { .. } => b.station_at(i).map(|p| (p, FOLLOW)),
-            Order::Guard { ward } => Some((b.centre(*ward as usize), FOLLOW)),
+            Order::Guard { ward } | Order::Screen { ward, .. } => Some((b.centre(*ward as usize), FOLLOW)),
+            Order::Charge { target } => b.squads.get(*target as usize).map(|_| (b.centre(*target as usize), ATTACK)),
+            Order::Withdraw { to } | Order::Regroup { to } => Some((*to, CREAM)),
+            Order::Build { at, .. } => Some((*at, GOLD)),
         };
         if let Some((to, colour)) = to {
             line(&mut img, from, to, colour);

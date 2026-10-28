@@ -1,6 +1,6 @@
 //! Formations (04-battle.md §4): the drawn front (`planFront`) and the line to a point.
 
-use super::{Battle, How, Order, SquadState};
+use super::{Battle, Order, SquadState};
 use crate::contracts::{Kind, P, SquadId, Team};
 use crate::math::atan2;
 
@@ -62,7 +62,7 @@ impl Poly {
 impl Battle {
     fn role(&self, i: usize) -> Role {
         let s = &self.squads[i];
-        if s.freed {
+        if s.freed || s.reserve.is_some() {
             Role::Reserve
         } else if s.spec.ranged() {
             Role::Bows
@@ -189,16 +189,15 @@ impl Battle {
         }
         for (i, p, f, files) in plan {
             let to = self.open_near(p);
-            let how = How { files, ..How::default() };
-            self.command(i, Order::Move { to, via: Vec::new(), fight, face: Some(f) }, how);
+            self.command_files(i, Order::Move { to, via: Vec::new(), fight, face: Some(f) }, files);
             self.squads[i].detached = false;
         }
         let back = if bows.is_empty() { ft.captain_back_no_bows } else { ft.captain_back };
         if fight {
-            self.command(cap, Order::Ride, How::default());
+            self.command(cap, Order::Ride);
         } else {
             let to = self.open_near(behind(back, 0.0));
-            self.command(cap, Order::Move { to, via: Vec::new(), fight: false, face: Some(face) }, How::default());
+            self.command(cap, Order::Move { to, via: Vec::new(), fight: false, face: Some(face) });
         }
         self.armies[team as usize].aim = face;
         Ok(())

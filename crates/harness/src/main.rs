@@ -34,6 +34,12 @@ enum Cmd {
         #[command(subcommand)]
         act: Act,
     },
+    /// Run the order language's checks (08-orders §3–§8): one scenario per verb, modifier, trigger and field work,
+    /// each printing its counts. `orders hold` runs only those whose name contains the word.
+    Orders {
+        /// Only checks whose name contains this.
+        filter: Option<String>,
+    },
     /// Print a replay file's map hash and state hashes every N ticks.
     Hashes {
         file: PathBuf,
@@ -89,8 +95,13 @@ enum Act {
         /// The armies: blight or mirror.
         #[arg(long, default_value = "blight")]
         setup: String,
+        /// A held start (08-orders §8): nobody advances until `do advance`.
+        #[arg(long)]
+        held: bool,
     },
-    /// Give an order now, e.g. `do march 20 13.5`, `do send BORS 18 6`, `do attack army E6`.
+    /// Give an order now, e.g. `do march 20 13.5`, `do send BORS 18 6`, `do attack army E6`, `do stance REN
+    /// holdfire`, `do wait signal 0 attack BORS E6`, `do signal`, `do guard ODA 0`, `do withdraw army`,
+    /// `do build WIL stakes 20 13.5` (the grammar is in sim::text).
     Do {
         #[arg(long, default_value_t = 0)]
         team: u8,
@@ -123,6 +134,21 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Cmd::Play { session, act } => play(&session, act),
+        Cmd::Orders { filter } => {
+            let mut failed = 0;
+            let mut ran = 0;
+            for (name, check) in sim::battle::checks::ALL {
+                if filter.as_ref().is_some_and(|f| !name.contains(f.as_str())) {
+                    continue;
+                }
+                let c = check();
+                ran += 1;
+                failed += (!c.pass) as u32;
+                println!("{} {}: {}", if c.pass { "PASS" } else { "FAIL" }, c.name, c.counts);
+            }
+            println!("orders: {} of {ran} checks pass", ran - failed as usize);
+            if failed > 0 { Err(format!("{failed} order checks failed")) } else { Ok(()) }
+        }
         Cmd::Sweep { map, width, us, them, setup, seeds, from, verbose } => {
             let kind = map_kind(&map)?;
             sim::battle::Setup::named(&setup, kind)?;
@@ -153,13 +179,14 @@ fn map_kind(map: &str) -> Result<MapKind, String> {
 
 fn play(session: &str, act: Act) -> Result<(), String> {
     let file = Path::new(SESSIONS).join(format!("{session}.json"));
-    if let Act::New { seed, map, width, us, them, setup } = act {
+    if let Act::New { seed, map, width, us, them, setup, held } = act {
         let kind = map_kind(&map)?;
         sim::battle::Setup::named(&setup, kind)?;
         let mut replay = Replay::new(seed, MapOpts { kind, width });
         if setup != "blight" {
             replay.setup = setup;
         }
+        replay.held = held;
         for (team, bot) in [(0, us), (1, them)] {
             if let Some(bot) = bot {
                 BotKind::parse(&bot)?;
@@ -178,6 +205,8 @@ fn play(session: &str, act: Act) -> Result<(), String> {
         Act::New { .. } => unreachable!(),
         Act::Do { team, words } => {
             let mut b = replay.run()?;
+            // Orders logged at this very tick are still queued: apply them first, so only this one's refusal shows.
+            b.flush();
             let deed = sim::text::parse(&b, team, &words.join(" "))?;
             let cmd = Command { tick: replay.tick, team, deed, src: Source::Typed, note: None };
             let refused = b.refusals.len();

@@ -22,12 +22,17 @@ mod setup;
 mod sight;
 #[cfg(test)]
 mod tests;
+mod works;
 
+pub mod checks;
+
+pub use crate::contracts::Work as WorkKind;
 pub use front::line_spots;
-pub use order::{How, Order, Pending, Priority, Rules, Shape, Stance, When};
+pub use order::{How, Order, Pace, Pending, Priority, Rules, Shape, Stance, When};
 pub use outcome::OutcomeReason;
 pub use replay::{BotSlot, Replay};
 pub use setup::{Company, Setup};
+pub use works::Work;
 
 use grid::Grid;
 
@@ -150,9 +155,9 @@ pub struct Squad {
     pub facing: f64,
     /// The verb (08-orders.md): what it is doing.
     pub order: Order,
-    /// The modifiers of the current order.
+    /// Its standing way (stance, pace, shape, frontage, pursuit, priority): kept from order to order until changed.
     pub how: How,
-    /// Orders waiting for their trigger.
+    /// Deeds waiting for their trigger.
     pub queue: Vec<Pending>,
     /// The current order has completed (for `When::Done`).
     pub done: bool,
@@ -163,7 +168,7 @@ pub struct Squad {
     pub max_morale: f64,
     /// Detached from the army by an order of its own, until recalled.
     pub detached: bool,
-    /// Frontage override from a drawn line.
+    /// The current order's frontage from a drawn line.
     pub files: Option<u16>,
     /// Its fixed place around the captain in line: (ahead, to the left), 04-battle.md §3d.
     pub station: (f64, f64),
@@ -173,6 +178,10 @@ pub struct Squad {
     pub way: Option<Way>,
     /// Freed men: the reserve.
     pub freed: bool,
+    /// Held back as the reserve (08-orders.md §3): its station by the captain in line, (ahead, to the left).
+    pub reserve: Option<(f64, f64)>,
+    /// At work on a field work this tick: it cannot fight (08-orders.md §7).
+    pub working: bool,
     /// Created with a commander (slot 0 is his, behind the ranks).
     pub commanded: bool,
     /// The commander's soldier index while he lives.
@@ -258,28 +267,6 @@ pub struct SiteState {
     pub by: Option<Team>,
 }
 
-/// Field works (08-orders.md §7): built by companies, with hp, changing movement, charges, arrows and sight.
-/// A hook for days 4–5: none are built yet, and every rule asks `Battle::work_*`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WorkKind {
-    Stakes,
-    Barricade,
-    Bridge,
-    Watchtower,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Work {
-    pub id: u16,
-    pub kind: WorkKind,
-    pub team: Team,
-    pub at: P,
-    pub face: f64,
-    /// 0..1 built.
-    pub built: f64,
-    pub hp: f64,
-}
-
 /// A blow collected in step 3 and landed in step 4.
 #[derive(Clone, Copy, Debug)]
 struct Strike {
@@ -311,6 +298,16 @@ pub struct Tally {
     pub missed: u64,
     /// Ticks a company pressed forward on a drake.
     pub presses: u64,
+    /// Field works (08-orders.md §7): built, torn down, the harm foes did them, and builders interrupted.
+    pub built: u64,
+    pub razed: u64,
+    pub raze_harm: f64,
+    pub interrupts: u64,
+    /// Arrows loosed.
+    pub arrows: u64,
+    /// Charging blows, their harm, and those that met stakes.
+    pub charge_harm: f64,
+    pub staked: u64,
 }
 
 /// A blow started but not yet landed (myth rule `impact`, §5): it lands at `lands` if its victim is still in
@@ -361,12 +358,21 @@ pub struct Battle {
     pub sites: Vec<SiteState>,
     /// Night has fallen (day 4 sets it; sight ×0.6 already reads it).
     pub night: bool,
-    /// Held before contact (08-orders.md §8): the clock runs, nobody advances until "advance". A hook for day 5.
+    /// The night is over (a campaign battle's dawn).
+    pub dawn: bool,
+    /// Held before contact (08-orders.md §8): the clock runs, nobody advances further than `held_depth` from
+    /// their deploy point until "advance".
     pub held: [bool; 2],
+    /// Field works laid out, building, standing or torn down (08-orders.md §7), by id.
     pub works: Vec<Work>,
+    /// Deeds for each army waiting for their trigger (08-orders.md §6).
+    pub waiting: [Vec<Pending>; 2],
     decided: Option<(Team, OutcomeReason)>,
     fog: [Vec<u8>; 2],
-    signals: [Vec<(u16, Tick)>; 2],
+    /// A waiting deed is being carried out: its orders keep the queues they land in.
+    releasing: bool,
+    /// The squads given an order since this was last cleared (what a `With` applies its modifiers to).
+    touched: Vec<usize>,
     /// Commands waiting for their tick, kept in arrival order.
     queue: Vec<Command>,
     grid: Grid,
@@ -400,11 +406,14 @@ impl Battle {
             tally: Tally::default(),
             sites,
             night: false,
-            held: [false; 2],
+            dawn: false,
+            held: [setup.held; 2],
             works: Vec::new(),
+            waiting: [Vec::new(), Vec::new()],
             decided: None,
             fog: [vec![0; tiles], vec![0; tiles]],
-            signals: [Vec::new(), Vec::new()],
+            releasing: false,
+            touched: Vec::new(),
             queue: Vec::new(),
             grid,
             strikes: Vec::new(),
@@ -485,8 +494,9 @@ impl Battle {
         }
         // 3. updateSoldier: targets and steering; strikes are collected, not applied.
         self.update_soldiers();
-        // 4. resolve: every blow lands together, after all movement.
+        // 4. resolve: every blow lands together, after all movement; then foes tear at the field works.
         self.resolve();
+        self.raze_works();
         // 5. burn: the village under the torch comes on day 4.
         // 6. arrows.
         self.update_arrows();
@@ -518,12 +528,13 @@ impl Battle {
         let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.queue).into_iter().partition(|c| c.tick <= self.tick);
         self.queue = later;
         for cmd in due {
+            self.touched.clear();
             if let Err((at, why)) = self.obey(cmd.team, &cmd.deed) {
-                self.refusals.push(Refusal { tick: self.tick, at, why: why.clone() });
-                self.event(EventCode::Refused, at, cmd.team as u32, 0);
+                self.refuse(cmd.team, at, why);
             }
             self.log.push(Command { tick: self.tick, ..cmd });
         }
+        self.touched.clear();
     }
 
     fn event(&mut self, code: EventCode, at: P, a: u32, b: u32) {
@@ -555,14 +566,10 @@ impl Battle {
         self.scratch.loose.get(j).copied().unwrap_or(0.0)
     }
 
-    /// Walkable for a man: passable ground not blocked by a work (08-orders.md §7 hook).
+    /// Walkable for a man: passable ground. A built barricade's tiles are rock and a bridge's road, so the
+    /// tiles answer for the field works (08-orders.md §7).
     pub fn walkable(&self, p: P) -> bool {
-        self.map.passable(p) && !self.work_blocks(p)
-    }
-
-    /// Field works that block movement (barricades): none are built yet.
-    fn work_blocks(&self, _p: P) -> bool {
-        false
+        self.map.passable(p)
     }
 
     /// The enemy-commander rules (§5: −25 on his fall, the 0.5 pull-out, −12) hold for team 1, and for both sides
@@ -583,22 +590,30 @@ impl Battle {
         let mv = &self.tune.movement;
         let anchor = P::new(s.x, s.y);
         let ranks_men = if s.leader.is_some() { n.saturating_sub(1) } else { n }.max(1);
-        let f = s.files.or(s.spec.frontage).unwrap_or(if s.kind == Kind::Horse { mv.frontage_horse } else { mv.frontage });
+        let o = &self.tune.orders;
+        let by_shape = match s.how.shape {
+            Shape::Line | Shape::ShieldWall => Some((ranks_men as u16).div_ceil(o.line_ranks.max(1))),
+            Shape::Column => Some(o.column_files),
+            _ => None,
+        };
+        let f = s.files.or(s.how.files).or(by_shape).or(s.spec.frontage).unwrap_or(if s.kind == Kind::Horse { mv.frontage_horse } else { mv.frontage });
         let f = (f as usize).max(1);
         let room = s.spec.radius / mv.base_radius;
-        let gap = mv.file_gap * room * s.how.spacing.unwrap_or(1.0);
+        let spacing = s.how.spacing.or((s.how.shape == Shape::ShieldWall).then_some(mv.tight_spacing)).unwrap_or(1.0);
+        let gap = mv.file_gap * room * spacing;
         let ranks = ranks_men.div_ceil(f);
+        let block = matches!(s.how.shape, Shape::Block | Shape::Line | Shape::Column | Shape::ShieldWall);
         if s.commanded && slot == 0 {
             let back = match s.how.shape {
-                Shape::Block => mv.commander_back + (ranks as f64 - 1.0) * gap,
+                _ if block => mv.commander_back + (ranks as f64 - 1.0) * gap,
                 Shape::Wedge => mv.commander_back + (ranks_men as f64).sqrt().ceil() * gap,
-                Shape::Ring => ring_radius(ranks_men, gap),
+                _ => ring_radius(ranks_men, gap),
             };
             return anchor.offset(s.facing, -back, 0.0);
         }
         let i = if s.commanded { slot as usize - 1 } else { slot as usize };
         match s.how.shape {
-            Shape::Block if s.spec.pack => {
+            _ if block && s.spec.pack => {
                 // A pack (§3a): files ×1.15, each rank's ends pushed back, and a fixed jitter per slot.
                 let pk = &self.tune.pack;
                 let (rank, file) = (i / f, i % f);
@@ -610,7 +625,7 @@ impl Battle {
                 let back = rank as f64 * gap + if end { pk.ends_back } else { 0.0 } + j(SALT_PACK_Y);
                 anchor.offset(s.facing, -back, lateral)
             }
-            Shape::Block => {
+            _ if block => {
                 let (rank, file) = (i / f, i % f);
                 let in_rank = f.min(ranks_men.saturating_sub(rank * f)).max(1);
                 let lateral = (file as f64 - (in_rank as f64 - 1.0) / 2.0) * gap;
@@ -621,7 +636,7 @@ impl Battle {
                 let file = i - r * r;
                 anchor.offset(s.facing, -(r as f64) * gap, (file as f64 - r as f64) * gap)
             }
-            Shape::Ring => {
+            _ => {
                 let radius = ring_radius(ranks_men, gap);
                 let centre = anchor.offset(s.facing, -radius, 0.0);
                 let a = s.facing + std::f64::consts::TAU * (i % ranks_men) as f64 / ranks_men as f64;
@@ -648,6 +663,20 @@ impl Battle {
             }
             hash_order(&mut f, &s.order);
             f.u32(s.queue.len() as u32);
+            // The order language's state, hashed only where it differs from 04-battle's, so replays without it
+            // keep their hashes.
+            if s.how != How::default() {
+                f.u32(0x0a11);
+                hash_how(&mut f, &s.how);
+            }
+            if let Some((a, l)) = s.reserve {
+                f.u32(0x0a12);
+                f.f64(a);
+                f.f64(l);
+            }
+            if s.working {
+                f.u32(0x0a13);
+            }
         }
         for m in &self.soldiers {
             f.u32(m.alive as u32);
@@ -676,6 +705,25 @@ impl Battle {
         for a in &self.armies {
             f.f64(a.heading);
             f.u32(a.formation as u32);
+        }
+        if self.held != [false; 2] || self.dawn {
+            f.u32(0x0a14 | (self.held[0] as u32) << 16 | (self.held[1] as u32) << 17 | (self.dawn as u32) << 18);
+        }
+        for q in &self.waiting {
+            if !q.is_empty() {
+                f.u32(0x0a15);
+                f.u32(q.len() as u32);
+            }
+        }
+        for w in &self.works {
+            f.u32(0x0a16);
+            f.u32(w.id as u32);
+            f.u32(w.kind as u32);
+            f.u32(w.team as u32);
+            f.u32(w.razed as u32);
+            for v in [w.at.x, w.at.y, w.built, w.hp] {
+                f.f64(v);
+            }
         }
         f.u32(self.decided.map_or(0, |(t, r)| 1 + t as u32 * 16 + r as u32));
         f.finish()
@@ -714,6 +762,26 @@ impl Battle {
             let rows: Vec<String> = self.squads.iter().filter(|s| s.team == team).map(|s| self.describe_squad(s)).collect();
             out += &format!("{label} ({:?}, heading {:.2}):\n  {}\n", a.formation, a.heading, rows.join("\n  "));
         }
+        for (team, q) in self.waiting.iter().enumerate() {
+            if !q.is_empty() {
+                let label = if team == 0 { "OURS" } else { "FOES" };
+                let deeds: Vec<String> = q.iter().map(|p| format!("{:?} -> {}", p.when, crate::text::format(&p.deed))).collect();
+                out += &format!("{label} ARMY WAITS: {}\n", deeds.join(" | "));
+            }
+        }
+        if self.held != [false; 2] {
+            out += &format!("HELD: {:?} (until advance)\n", self.held);
+        }
+        for w in &self.works {
+            let state = if w.razed {
+                "razed".to_string()
+            } else if w.built >= 1.0 {
+                "standing".to_string()
+            } else {
+                format!("{:.0}% built", w.built * 100.0)
+            };
+            out += &format!("WORK {} {:?} team {} ({:.1},{:.1}) face {:.2} {state} hp {:.0}/{:.0}\n", w.id, w.kind, w.team, w.at.x, w.at.y, w.face, w.hp, w.max_hp);
+        }
         for r in &self.refusals {
             out += &format!("REFUSED tick {} at ({:.1},{:.1}): {}\n", r.tick, r.at.x, r.at.y, r.why);
         }
@@ -735,11 +803,18 @@ impl Battle {
             Order::Recall { .. } => "recall".to_string(),
             Order::Retreat => "retreat".to_string(),
             Order::Ride => "ride".to_string(),
+            Order::Screen { ward, from } => format!("screen {ward}{}", from.map_or(String::new(), |f| format!(" from {f}"))),
+            Order::Charge { target } => format!("charge {target}"),
+            Order::Withdraw { to } => format!("withdraw ({:.1},{:.1})", to.x, to.y),
+            Order::Regroup { to } => format!("regroup ({:.1},{:.1})", to.x, to.y),
+            Order::Build { work, .. } => format!("build work {work}{}", if s.working { " (working)" } else { "" }),
         };
         let detached = if s.detached { " detached" } else { "" };
+        let reserve = if s.reserve.is_some() { " reserve" } else { "" };
         let queued = if s.queue.is_empty() { String::new() } else { format!(" +{} queued", s.queue.len()) };
+        let way = if s.how == How::default() { String::new() } else { format!(" [{}]", describe_how(&s.how)) };
         format!(
-            "{} {name} {} {}/{} ({:.1},{:.1}) face {:.2} {:?} morale {:.0} {order}{detached}{queued}",
+            "{} {name} {} {}/{} ({:.1},{:.1}) face {:.2} {:?} morale {:.0} {order}{detached}{reserve}{way}{queued}",
             s.id,
             s.unit.name(),
             s.alive,
@@ -806,6 +881,56 @@ fn ring_radius(n: usize, gap: f64) -> f64 {
     (n as f64 * gap / std::f64::consts::TAU).max(gap)
 }
 
+/// A company's standing way, in words, for `describe`.
+fn describe_how(h: &How) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if h.stance != Stance::Normal {
+        parts.push(format!("{:?}", h.stance).to_lowercase());
+    }
+    if let Some(p) = h.pace {
+        parts.push(format!("{p:?}").to_lowercase());
+    }
+    if h.shape != Shape::Block {
+        parts.push(format!("{:?}", h.shape).to_lowercase());
+    }
+    if let Some(n) = h.files {
+        parts.push(format!("{n} files"));
+    }
+    if let Some(k) = h.spacing {
+        parts.push(format!("spacing {k}"));
+    }
+    if let Some(p) = h.pursue {
+        parts.push(if p { "pursue".into() } else { "no pursuit".into() });
+    }
+    if h.priority != Priority::Nearest {
+        parts.push(format!("{:?}", h.priority).to_lowercase());
+    }
+    parts.join(", ")
+}
+
+fn hash_how(f: &mut Fnv, h: &How) {
+    f.u32(h.stance as u32);
+    f.u32(h.pursue.map_or(2, |p| p as u32));
+    f.u32(h.pace.map_or(9, |p| p as u32));
+    f.u32(h.shape as u32);
+    f.u32(h.files.map_or(u32::MAX, |n| n as u32));
+    f.f64(h.spacing.unwrap_or(f64::MAX));
+    let (code, arg) = match h.priority {
+        Priority::Nearest => (0, 0),
+        Priority::Kind { kind } => (1, kind as u32),
+        Priority::Unit { unit } => (2, unit as u32),
+        Priority::Ranged => (3, 0),
+        Priority::Shaken => (4, 0),
+        Priority::Weakest => (5, 0),
+        Priority::Strongest => (6, 0),
+        Priority::Commander => (7, 0),
+        Priority::Attacking { id } => (8, id as u32),
+        Priority::Squad { id } => (9, id as u32),
+    };
+    f.u32(code);
+    f.u32(arg);
+}
+
 fn hash_order(f: &mut Fnv, o: &Order) {
     let pts = |f: &mut Fnv, ps: &[P]| {
         for p in ps {
@@ -846,6 +971,28 @@ fn hash_order(f: &mut Fnv, o: &Order) {
         }
         Order::Retreat => f.u32(7),
         Order::Ride => f.u32(8),
+        Order::Screen { ward, from } => {
+            f.u32(9);
+            f.u32(*ward as u32);
+            f.u32(from.map_or(u32::MAX, |x| x as u32));
+        }
+        Order::Charge { target } => {
+            f.u32(10);
+            f.u32(*target as u32);
+        }
+        Order::Withdraw { to } => {
+            f.u32(11);
+            pts(f, std::slice::from_ref(to));
+        }
+        Order::Regroup { to } => {
+            f.u32(12);
+            pts(f, std::slice::from_ref(to));
+        }
+        Order::Build { work, at } => {
+            f.u32(13);
+            f.u32(*work as u32);
+            pts(f, std::slice::from_ref(at));
+        }
     }
 }
 

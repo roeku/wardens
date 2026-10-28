@@ -58,17 +58,7 @@ pub struct Run {
 }
 
 fn order_name(o: &Order) -> &'static str {
-    match o {
-        Order::Hold { .. } => "hold",
-        Order::Move { .. } => "move",
-        Order::Attack { .. } => "attack",
-        Order::Take { .. } => "take",
-        Order::Follow => "follow",
-        Order::Guard { .. } => "guard",
-        Order::Recall { .. } => "recall",
-        Order::Retreat => "retreat",
-        Order::Ride => "ride",
-    }
+    o.name()
 }
 
 /// One battle, `us` as team 0 and `them` as team 1, measured tick by tick.

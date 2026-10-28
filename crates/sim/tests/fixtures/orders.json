@@ -1,0 +1,339 @@
+{
+  "seed": 4,
+  "map": {
+    "kind": "keep",
+    "width": 48
+  },
+  "tick": 2700,
+  "log": [
+    {
+      "tick": 0,
+      "team": 0,
+      "deed": {
+        "do": "set",
+        "who": {
+          "t": "squad",
+          "id": 3
+        },
+        "how": {
+          "stance": "hold_fire"
+        }
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 0,
+      "team": 0,
+      "deed": {
+        "do": "build",
+        "who": {
+          "t": "squad",
+          "id": 1
+        },
+        "work": "bridge",
+        "at": {
+          "x": 21.5,
+          "y": 14.5
+        },
+        "face": 0.0
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 0,
+      "team": 0,
+      "deed": {
+        "do": "reserve",
+        "who": {
+          "t": "squad",
+          "id": 2
+        }
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 0,
+      "team": 0,
+      "deed": {
+        "do": "wait",
+        "until": {
+          "on": "signal",
+          "n": 0
+        },
+        "deed": {
+          "do": "with",
+          "how": {
+            "stance": "aggressive"
+          },
+          "deed": {
+            "do": "charge",
+            "who": {
+              "t": "squad",
+              "id": 4
+            },
+            "target": 6
+          }
+        }
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 0,
+      "team": 0,
+      "deed": {
+        "do": "wait",
+        "until": {
+          "on": "done"
+        },
+        "deed": {
+          "do": "face",
+          "who": {
+            "t": "squad",
+            "id": 1
+          },
+          "face": 0.1
+        }
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 90,
+      "team": 0,
+      "deed": {
+        "do": "with",
+        "how": {
+          "pace": "double",
+          "shape": "wedge"
+        },
+        "deed": {
+          "do": "move",
+          "who": {
+            "t": "army"
+          },
+          "to": {
+            "x": 14.0,
+            "y": 13.5
+          },
+          "via": [],
+          "fight": false,
+          "face": null
+        }
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 300,
+      "team": 0,
+      "deed": {
+        "do": "advance"
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 300,
+      "team": 0,
+      "deed": {
+        "do": "set",
+        "who": {
+          "t": "squad",
+          "id": 3
+        },
+        "how": {
+          "stance": "skirmish",
+          "priority": {
+            "by": "unit",
+            "unit": 8
+          }
+        }
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 300,
+      "team": 0,
+      "deed": {
+        "do": "wait",
+        "until": {
+          "on": "enemy_near",
+          "at": {
+            "x": 30.0,
+            "y": 13.5
+          },
+          "r": 6.0
+        },
+        "deed": {
+          "do": "commit",
+          "who": {
+            "t": "squad",
+            "id": 2
+          },
+          "target": null
+        }
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 450,
+      "team": 0,
+      "deed": {
+        "do": "wait",
+        "until": {
+          "on": "breaks",
+          "squad": 6
+        },
+        "deed": {
+          "do": "signal",
+          "n": 1
+        }
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 450,
+      "team": 0,
+      "deed": {
+        "do": "wait",
+        "until": {
+          "on": "signal",
+          "n": 1
+        },
+        "deed": {
+          "do": "regroup",
+          "who": {
+            "t": "squad",
+            "id": 4
+          }
+        }
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 600,
+      "team": 0,
+      "deed": {
+        "do": "signal",
+        "n": 0
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 900,
+      "team": 0,
+      "deed": {
+        "do": "guard",
+        "who": {
+          "t": "squad",
+          "id": 3
+        },
+        "ward": 0
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 900,
+      "team": 0,
+      "deed": {
+        "do": "withdraw",
+        "who": {
+          "t": "squad",
+          "id": 4
+        },
+        "to": null
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 1200,
+      "team": 0,
+      "deed": {
+        "do": "screen",
+        "who": {
+          "t": "squad",
+          "id": 2
+        },
+        "ward": 3,
+        "from": null
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 1200,
+      "team": 0,
+      "deed": {
+        "do": "build",
+        "who": {
+          "t": "squad",
+          "id": 3
+        },
+        "work": "stakes",
+        "at": {
+          "x": 12.0,
+          "y": 13.5
+        },
+        "face": 0.1
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 1500,
+      "team": 0,
+      "deed": {
+        "do": "commit",
+        "who": {
+          "t": "army"
+        },
+        "target": null
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 1500,
+      "team": 0,
+      "deed": {
+        "do": "face",
+        "who": {
+          "t": "army"
+        },
+        "face": 0.2
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 1800,
+      "team": 0,
+      "deed": {
+        "do": "charge",
+        "who": {
+          "t": "squads",
+          "ids": [
+            1,
+            2
+          ]
+        },
+        "target": null
+      },
+      "src": "typed"
+    },
+    {
+      "tick": 1800,
+      "team": 0,
+      "deed": {
+        "do": "set",
+        "who": {
+          "t": "army"
+        },
+        "how": {
+          "shape": "column"
+        }
+      },
+      "src": "typed"
+    }
+  ],
+  "bots": [
+    {
+      "team": 1,
+      "bot": "garrison"
+    }
+  ],
+  "held": true
+}

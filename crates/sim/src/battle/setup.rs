@@ -44,12 +44,15 @@ pub struct Setup {
     /// Team 1 deploys as an army round its general, mirroring team 0's stations (the open field); otherwise its
     /// companies stand in a line 2.5 tiles before the keep, each at its own post.
     pub mirror: bool,
+    /// A held start (08-orders.md §8 "Deployment before contact"): nobody advances beyond the deploy zone until a
+    /// side says "advance".
+    pub held: bool,
 }
 
 impl Default for Setup {
     /// A held place (keep, town, ford): the blight stands before the keep, the broodlord on it.
     fn default() -> Setup {
-        Setup { warband: warband(), garrison: nest(), general: Some(broodlord()), mirror: false }
+        Setup { warband: warband(), garrison: nest(), general: Some(broodlord()), mirror: false, held: false }
     }
 }
 
@@ -83,7 +86,7 @@ impl Setup {
     /// The open field against the blight: the warband against the blight's host deployed as an army round its
     /// broodlord, stations mirrored left and right.
     pub fn field() -> Setup {
-        Setup { warband: warband(), garrison: blight(), general: Some(broodlord()), mirror: true }
+        Setup { warband: warband(), garrison: blight(), general: Some(broodlord()), mirror: true, held: false }
     }
 
     /// The symmetric human field of day 3, kept for regression sweeps: both sides a captain and the same four
@@ -93,7 +96,7 @@ impl Setup {
             .into_iter()
             .map(|(k, n)| Company::new(k, n))
             .collect();
-        Setup { warband: warband(), garrison, general: Some(Company::new(Kind::Captain, "GENERAL")), mirror: true }
+        Setup { warband: warband(), garrison, general: Some(Company::new(Kind::Captain, "GENERAL")), mirror: true, held: false }
     }
 
     /// The setup a map kind opens with when nothing else is given: the blight, as an army on the open field.
@@ -262,6 +265,8 @@ fn add(b: &mut Battle, team: Team, c: &Company, at: P, facing: f64, stations: ((
         column: stations.1,
         way: c.way,
         freed: c.freed,
+        reserve: None,
+        working: false,
         commanded,
         leader: commanded.then_some(first),
         commander_fell: false,

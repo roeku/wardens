@@ -8,11 +8,6 @@ use crate::contracts::P;
 use crate::map::SiteKind;
 
 impl Battle {
-    /// A manned watchtower's sight bonus at `p` (08-orders.md §7 hook: +3): none are built yet.
-    fn work_sight(&self, _p: P, _team: u8) -> f64 {
-        0.0
-    }
-
     pub(super) fn update_sight(&mut self) {
         let t = self.tune.sight.clone();
         let night = if self.night { t.night } else { 1.0 };
@@ -24,7 +19,7 @@ impl Battle {
                 }
                 let c = self.centre(i);
                 let hill = (self.height(c) * t.hill_k).min(t.hill_cap);
-                circles.push((c, (t.base + hill + self.work_sight(c, team)) * night + self.spread(i).min(t.spread_cap)));
+                circles.push((c, (t.base + hill + self.work_bonus(c, team, "sight")) * night + self.spread(i).min(t.spread_cap)));
             }
             for (site, st) in self.map.sites.iter().zip(&self.sites) {
                 if st.owner == Some(team) {

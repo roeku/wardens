@@ -1294,3 +1294,138 @@ check follows the roster's first figure.
 - The flame lights nothing at night (02-look.md §3 lights), and the blight lights no torches.
 - A tamed drake on our side (Myths) wears no harness in our colours.
 - The blight's hit flash is the men's white (02-look.md §5).
+
+## D-16 | 2026-10-28 | Day 4: the order language in the sim (08-orders §3, §5–§8)
+**Summary:** every deed of the order-language contract (D-10, commit 940cb21) is carried out through the Day 3 order model:
+- modifiers that stand from order to order: stance, pace, shape, files, pursuit, target priority
+- per-company and per-army wait queues with every trigger, released by signals
+- guard, screen, charge, withdraw (still facing the foe), regroup, reserve and commit, face, a held start with advance, and several companies at once
+- the four field works as data (stakes, barricade, bridge, watchtower), built over time, interruptible, torn down by the blight
+`sim::text` has a text command for each, so the harness can play them all. Built by a delegated agent; checked again before commit.
+**Verified:**
+- 79 tests pass; clippy is clean.
+- `harness orders`: 34 of 34 behaviour checks pass, each with printed numbers. For example:
+  - hold fire: 61 arrows → 0
+  - withdraw: steps back 3.79 tiles still facing within 0.08 rad
+  - stakes: charge damage 8.7 → 1.2
+  - bridge: the crossing path shrinks from 12 to 6 tiles
+  - signal: releases on its tick and not before
+- The replay, field, mirror and land goldens are unchanged. A new `orders.json` replay matches natively and in WASM.
+- **Gates:** charge vs general1 23.0%; jitter 0.057 and 6.0; keep 56%.
+**Open:**
+- The view cannot see works, wait queues or the held start yet (they need sim-wasm exposure). Withdrawing men will be drawn by their motion, so facing backwards. A bridge needs a deck under the men.
+- "Wait for dawn" cannot fire while a battle ends at dawn.
+- On keep seed 4 one drake company deploys off the map (pre-existing).
+- To revisit: pace 0.6/1.0/1.4, the works' build times and hp, and the barricade's ×0.5 arrow cover.
+
+# Decisions: the order language in the sim (08-orders §2–§8; DECISIONS.md D-10, D-11)
+
+Code: `crates/sim/src/battle/{order,orders,works,anchor,combat,men,sight,outcome,front,mod,setup,replay,checks}.rs`,
+`crates/sim/src/{text,tune}.rs`, `crates/sim/src/bots/{mod,general}.rs`, `crates/harness/src/{main,sweep,draw}.rs`,
+`crates/sim/tests/{determinism.rs,fixtures/orders.*}`, `crates/sim-wasm/tests/orders.rs`.
+The contract (`crates/sim/src/contracts.rs`) is unchanged.
+
+### A company's way stands until changed
+**Decision:**
+- `Squad.how` (stance, pursue, pace, shape, files, spacing, priority) is kept from order to order. `Set` merges the contract's `How` into it with no new order; `With{how, deed}` merges it into every squad the inner deed orders (the captain and his followers for an army order).
+- Unset fields keep what the company had (the contract's rule). A new shape clears a standing `files` unless `files` comes with it; `loose` and `tight` change only the spacing.
+- A drawn front's frontage stays per order (`Squad.files`, reset by every new order), so a front's files never outlive it.
+- `Quick` pace is stored as the spec's own pace (`None`).
+
+**Why:** "archers, hold fire" is a standing order until "fire at will"; resetting the way on every order would undo it at the next attack. Keeping the front's files per order keeps every existing replay bit-identical.
+**Rejected:** a `How` per order (resets on each command, as on day 3); putting the front's files into the standing way.
+**Spec:** 08-orders.md §5; contracts `How`.
+
+### Waiting deeds, signals and triggers
+**Decision:**
+- `Wait{until, deed}` stores the deed itself (`Pending { deed, when, queued, signalled }`), in the queue of the company it names, or in `Battle.waiting[team]` when it is for the army (or names no company: front, rally, signal, advance). Several companies each wait in their own queue. `With` around a `Wait` is moved inside it, so the modifiers apply when it runs.
+- At tick step 2, for each company in id order and then each army, the first waiting deed whose trigger holds is obeyed as if given then, except that it keeps the queues it lands in. At most one per company per tick.
+- `Done` is the company's `done` (an army's: its captain's). A plain hold is never done.
+- `Signal{n}` marks every waiting deed on signal `n` of that side; they run in that tick's step 2. A signal given before a wait (even in the same tick) does not release it.
+- `After{s}`: `(tick − queued)·dt ≥ s`. `EnemyNear{at, r}`: any living foe man within `r` of `at`, from sim state (not the side's fog). `Breaks{squad}`: routing, fled or destroyed. `CaptainAttacked`: the captain hit within the last second. `Nightfall`: `night`. `Dawn`: the new `Battle.dawn`, set when the night ends.
+- A direct order clears the queue of every company it orders, and a direct army order (any deed for the army, a front, a rally) clears the army's waiting deeds. `Set`, `Wait`, `Signal`, `Advance` and `Recall` clear nothing.
+- A waiting deed is validated when it runs; a refusal then is logged and marked like any other.
+
+**Why:** storing the deed lets any deed wait (army orders included) and keeps one code path for obeying. Signals as flags make "not before the signal" exact.
+**Rejected:** converting deeds to orders at queue time (army orders lay out stations when they run); a FIFO where only the first waiting deed can fire (a signal wait would block a later condition).
+**Spec:** 08-orders.md §6; D-11 "The order model".
+**Note for the voice side:** give the direct order first and the waits after it in the same words ("BORS, hold — on my mark, charge" → `Hold`, then `Wait`), or the direct order clears the wait.
+
+### Several companies at once
+**Decision:** `Who::Squads{ids}` is split into one deed per company (through `With` and `Wait`), each obeyed as if alone. Each refused company is refused on its own; the deed as a whole is refused only if every company is.
+**Spec:** 08-orders.md §2; contracts `Who::Squads`.
+
+### Who the army is, per verb
+**Decision:** naming the captain is naming the army (as on day 3).
+- `Set` for the army: the captain and every standing company, with the army or detached ("everyone").
+- `Attack`/`Charge` for the army: the line (companies with the army, less the reserve); the captain rides.
+- `Guard`/`Screen` for the army: the captain does it and the army follows him. `Withdraw` for the army: every company with it and the captain step back by the captain's step, still with the army. `Regroup` for the army: the army marches back. `Face` for the army: the captain holds facing it and the army's heading aims there.
+- `Reserve` and `Build` for the army are refused ("name a company"). `Commit` for the army commits every reserve company.
+
+### Stances, pace, shapes (numbers in `StanceTune`, `OrdersTune`, `MoveTune`)
+**Decision:**
+- Stances as D-11 (`Battle::rules`): aggressive engage +2, seek +2, pursue; defensive engage ≤ reach + 1 for melee and a leash of 3 from its post; hold fire: no arrows, strike only what is in reach; skirmish: ranged step back from melee foes within 3.5.
+- The post a defensive company keeps to is where it was posted by a hold, and travels with its anchor while it is under any other order and not fighting. Its turning to defend the captain is leashed too.
+- Skirmish also moves the block: a ranged company in a fight with a melee foe man within 3.5 of any of its men walks its anchor back to 3.5 + 1 from him, facing him, at full pace, ungated. (Day 3 moved only the men, who then walked back to their slots.)
+- Pace (chosen): walk 0.6, quick 1.0 (the spec's), double 1.4 of the company's speed. It scales the anchor and, while the company marches out of a fight, its men. The captain's pace counts his followers' pace. Double time with the army forms column at once.
+- Shapes: `line` and `shield wall` stand 2 ranks deep (`line_ranks`); `column` is 2 files wide (`column_files`); `wedge` and `square` (the ring) are day 3's; `shield wall` takes the tight spacing; `loose`/`tight` are 1.6/0.85 of the file gap. A drawn front's files come first, then a standing `files`, then the shape's.
+- Shapes are geometry only: the spec gives no combat effect for a shield wall or a square.
+
+**Rejected:** a shield-wall arrow bonus (no number in the spec); scaling the men's fighting speed by the pace.
+**Spec:** 08-orders.md §3 "form", §5.
+
+### Priorities
+**Decision:**
+- The contract's `Unit{unit}` is `Unit::ALL[unit]`; an id out of range is refused.
+- `Weakest` covers "the weakest or the most shaken": the least men × worth × morale share.
+- `Commander`: the side's captain (the broodlord) by the full priority bonus, a company with a living commander by half.
+- The same `Battle::priority_score` sets the squad's threat, its men's targets and the bots' `pick`. The charge bot and the general (below skill 2) now pick by each company's standing priority; it is `Nearest` unless an order set it, so their play is unchanged.
+- `Charge`/`Commit` without a target take the best foe by the company's priority among those its side sees (commit: within 24).
+
+**Spec:** 08-orders.md §4, §5.
+
+### The new verbs
+**Decision:**
+- **Guard:** day 3's escort (`guard_behind` 3 behind the ward, defending it within 5). A company cannot guard itself.
+- **Screen:** stand `screen_d` = 3 from the ward toward `from`, else the nearest foe to the ward (within 24), else the threat point, facing it; it defends the ward within 5 like an escort.
+- **Charge:** attack now with the cohesion gate off (`Order::Charge`); done like an attack.
+- **Withdraw:** to `to`, or 6 tiles straight back from the nearest foe; the anchor walks at 0.6 of its pace, gated, turning toward the nearest foe at the fighting turn rate (2.5 rad/s); it never engages, its men strike in passing and do not charge. Detached it holds there facing the foe; with the army it falls in again.
+- **Regroup:** to 6 behind the centre of the side's other companies, away from the threat; never engages; holds there facing the nearest foe. Morale comes back by the spec's own recovery (+5/s unattacked): no new rule.
+- Withdraw and regroup points stay 3 inside the map's sides (`edge_keep`), so a captain never withdraws onto his own edge.
+- **Reserve:** the company follows the captain at a reserve station 6.5 behind him (behind the bows), `reserve_side` to the side by turns; it fights only what reaches it; a drawn front puts it in the reserve's place; army attacks and charges leave it. **Commit** clears it: at the target, else the best foe within 24, else back to its line station.
+- **Face:** a company holds where it stands, facing the angle (detached, as a hold is).
+- **Held start and Advance:** `Setup.held` / `Replay.held` (`harness play … new --held`) holds both sides: no anchor goes further than `held_depth` = 8 from its side's deploy point toward the enemy's. Companies may still be placed inside that. `Advance` (from either side) ends it for both.
+
+**Rejected:** a held start that freezes all movement (the player could not place the army); a regroup bonus to morale recovery (no number in the spec).
+**Spec:** 08-orders.md §3, §8.
+
+### Field works
+**Decision:**
+- `WorksTune` holds the four works as data `{work_s, footprint, hp, mods, blocks}` in 07-progression §9's mod form `{path, op, v}`:
+
+  | work | work_s | footprint | hp | mods | blocks |
+  |---|---|---|---|---|---|
+  | stakes | 8 | 4 × 1 | 40 | `charge` set 1, `charge_taken` ×0.4 (spec) | no |
+  | barricade | 12 | 3 × 1 | 80 | `arrow_taken` ×0.5 | yes |
+  | bridge | 20 | 2 wide, spans ≤ 10 | 120 | — | (its water becomes road) |
+  | watchtower | 15 | 1.5 × 1.5 | 100 | `sight` +3, `range` +1.2 (spec) | no |
+
+  Times, sizes, hp and the barricade's 0.5 are chosen.
+- `Build` lays the work out at once (`built` 0, so the view can show it rising) or joins an unfinished one of the same kind within a tile (two companies build twice as fast). It is refused off the map, on blocked ground, on another work, out of reach, and (bridge) with no water within 1.5 along the crossing or water wider than the span.
+- The company walks to its spot (1.2 behind the work's back edge; a bridge's nearer landing) and works `dt/work_s` a tick. At work it cannot fight: it does not engage, loose or take targets. A hit on any of its men interrupts it: it holds and fights; the work keeps what was built.
+- Built, a barricade's tiles become rock and a bridge's water tiles road, so A*, the men and the anchors all use them; torn down, the old tiles come back.
+- Stakes: a charging blow at a man of their side among or up to 2.5 behind them, from in front, loses the charge bonus and takes `charge_taken ×0.4`; it costs no charge morale. Barricade: an arrow from in front at a man up to 2.5 behind it takes `arrow_taken ×0.5`. Watchtower: a company with its centre within 1.8 sees +3 and (ranged) shoots +1.2, by the best tower.
+- Tearing down: any foe man in reach of a work with no foe to strike (not a commander, not building) does his `damage × raze` (1) per interval to it. The general and garrison bots send the nearest free melee foot company (not a breather, not horse) at each foe work they see, fighting ("capture squads go for places and works").
+- `Battle.works` is pub and keeps razed works (`razed`), with each work's `built`, `hp`, `tiles`, `ends` and `size` for the view.
+
+**Rejected:** works as squads; a per-man tear-down cooldown (dps is the same over a second and needs no state).
+**Spec:** 08-orders.md §7.
+
+### Hashes and goldens
+**Decision:** the new state is hashed only where it differs from day 3's (a non-default way, a reserve, a builder at work, a held start, dawn, an army's waiting deeds, the works), so the keep, field and mirror goldens are unchanged. `fixtures/orders.json` (the keep, held, against the garrison bot) is golden-hashed natively and in WASM.
+
+### Text commands
+**Decision:** `sim::text` reads and writes every deed (`parse(format(d)) == d`); the grammar is in its module comment. Names and `me` are read; ids are written. `then X` is `wait done X`.
+
+### Dawn
+**Decision:** `Battle.dawn` is set when the night ends; on today's keep and town maps that is the tick the battle is decided, so `When::Dawn` only matters once a battle can outlast its night (day 4's relief). The check sets the flag directly.

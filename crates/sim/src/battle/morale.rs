@@ -2,7 +2,7 @@
 //! shields, recovery, horse terror, breaking below 22, rallying after 5 quiet seconds, and the captain's wounds
 //! closing.
 
-use super::{Battle, DT, How, Order, SquadState};
+use super::{Battle, DT, Order, SquadState};
 use crate::contracts::{EventCode, Kind, P, Way};
 
 impl Battle {
@@ -115,7 +115,7 @@ impl Battle {
     /// §5 "Rallying": back at morale 45 with a hold order where it stands.
     fn rally(&mut self, i: usize) {
         let m = self.tune.morale.rally_morale;
-        self.set_order(i, Order::Hold { face: None }, How::default());
+        self.set_order(i, Order::Hold { face: None }, None);
         let s = &mut self.squads[i];
         s.state = SquadState::Idle;
         s.morale = m.min(s.max_morale);

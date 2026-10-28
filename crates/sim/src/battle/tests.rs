@@ -143,16 +143,19 @@ fn fog_is_seen_near_the_army_and_unknown_far_away() {
 
 #[test]
 fn pending_orders_run_on_completion_on_a_signal_and_on_a_condition() {
+    use crate::contracts::{How as Way, Stance as St};
     let mut b = field();
     let (wil, oda, ren) = (named(&b, "WIL"), named(&b, "ODA"), named(&b, "REN"));
-    order(&mut b, 0, Deed::Move { who: Who::Squad { id: wil as u16 }, to: P::new(12.0, 11.0), via: Vec::new(), fight: false, face: None });
-    b.queue_order(wil, Order::Hold { face: Some(0.0) }, How { stance: Stance::Defensive, ..How::default() }, When::Done);
-    b.queue_order(oda, Order::Move { to: P::new(12.0, 16.0), via: Vec::new(), fight: false, face: None }, How::default(), When::Signal { n: 1 });
-    b.queue_order(ren, Order::Hold { face: None }, How { stance: Stance::HoldFire, ..How::default() }, When::After { s: 2.0 });
+    let id = |i: usize| Who::Squad { id: i as u16 };
+    let set = |i: usize, stance: St| Deed::Set { who: id(i), how: Way { stance: Some(stance), ..Way::default() } };
+    order(&mut b, 0, Deed::Move { who: id(wil), to: P::new(12.0, 11.0), via: Vec::new(), fight: false, face: None });
+    order(&mut b, 0, Deed::Wait { until: When::Done, deed: Box::new(set(wil, St::Defensive)) });
+    order(&mut b, 0, Deed::Wait { until: When::Signal { n: 1 }, deed: Box::new(Deed::Move { who: id(oda), to: P::new(12.0, 16.0), via: Vec::new(), fight: false, face: None }) });
+    order(&mut b, 0, Deed::Wait { until: When::After { s: 2.0 }, deed: Box::new(set(ren, St::HoldFire)) });
     b.step(30);
     assert_eq!(b.squads[oda].queue.len(), 1, "waits for the signal");
     assert_eq!(b.squads[ren].queue.len(), 1, "waits 2 s");
-    b.raise_signal(0, 1);
+    order(&mut b, 0, Deed::Signal { n: 1 });
     b.step(2 * 30);
     assert!(b.squads[oda].queue.is_empty() && matches!(b.squads[oda].order, Order::Move { .. } | Order::Hold { .. }));
     assert!(b.squads[ren].queue.is_empty() && b.squads[ren].how.stance == Stance::HoldFire);
@@ -209,7 +212,7 @@ fn a_bot_battle_on_the_field_ends() {
 /// One company of ours (squad 1; our captain, squad 0, stands far back) against one of theirs (squad 2) on the
 /// open field, 7 tiles apart and facing each other.
 fn duel(ours: Unit, theirs: Unit, tune: Tune) -> Battle {
-    let setup = Setup { warband: vec![Company::of(ours, "")], garrison: vec![Company::of(theirs, "")], general: None, mirror: false };
+    let setup = Setup { warband: vec![Company::of(ours, "")], garrison: vec![Company::of(theirs, "")], general: None, mirror: false, held: false };
     let mut b = Battle::new(7, MapOpts { kind: MapKind::Field, width: 48 }, &setup, tune);
     let (a, z) = (P::new(20.0, 13.5), P::new(27.0, 13.5));
     for (i, at, face) in [(0usize, P::new(5.0, 13.5), 0.0), (1, a, 0.0), (2, z, std::f64::consts::PI)] {

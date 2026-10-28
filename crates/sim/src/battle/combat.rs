@@ -114,7 +114,7 @@ impl Battle {
                     continue;
                 }
                 if ranged {
-                    if d > engage + self.height_bonus(ma.pos(), mb.pos(), &self.tune) || !self.sees(team, mb.pos()) {
+                    if d > engage + self.height_bonus(ma.pos(), mb.pos(), &self.tune) + self.work_bonus(ma.pos(), team, "range") || !self.sees(team, mb.pos()) {
                         continue;
                     }
                 } else if d > engage {
@@ -200,8 +200,18 @@ impl Battle {
                 }
                 continue;
             }
-            // 08-orders.md §7 hook: charging into stakes takes chargeTaken ×0.4 and loses the charge bonus.
-            let charge = st.charge && self.work_stakes(self.soldiers[v].pos()).is_none();
+            // 08-orders.md §7: a charge into stakes loses its bonus and takes the stakes' chargeTaken ×0.4.
+            let staked = if st.charge {
+                self.work_stakes(self.soldiers[a].pos(), self.soldiers[v].pos(), vic.team)
+                    .map(|w| w.modded("charge", att.spec.charge) * w.modded("charge_taken", vic.spec.charge_taken))
+            } else {
+                None
+            };
+            let charge = st.charge && staked.is_none();
+            if let Some(k) = staked {
+                mult *= k;
+                self.tally.staked += 1;
+            }
             if charge {
                 mult *= att.spec.charge * vic.spec.charge_taken;
                 if att.way() == Some(Way::Reckless) {
@@ -231,6 +241,9 @@ impl Battle {
             let (at, now) = (m.pos(), m.hp);
             self.event(EventCode::Hit, at, v as u32, kind | (st.charge as u32) << 8);
             if st.charge {
+                self.tally.charge_harm += st.dmg * mult;
+            }
+            if charge {
                 self.squads[vsq].morale -= c.charge_morale;
                 let last = self.squads[asq].charge_event;
                 if last == Tick::MAX || self.tick >= last.saturating_add(gap) {
@@ -269,7 +282,7 @@ impl Battle {
             let shooter = &self.squads[self.soldiers[a.shooter].squad as usize];
             let vic = &self.squads[t.squad as usize];
             let taken = vic.spec.arrow_taken + (1.0 - vic.spec.arrow_taken) * shooter.spec.pierce;
-            let dmg = a.dmg * taken * if vic.spec.beast { shooter.spec.bane } else { 1.0 } * self.work_cover(a.from, t.pos());
+            let dmg = a.dmg * taken * if vic.spec.beast { shooter.spec.bane } else { 1.0 } * self.work_cover(a.from, t.pos(), vic.team);
             let kind = shooter.kind as u32;
             let m = &mut self.soldiers[a.target];
             let was = m.hp;
@@ -282,16 +295,6 @@ impl Battle {
             }
         }
         self.arrows.extend(keep);
-    }
-
-    /// Stakes in front of `p` (08-orders.md §7 hook): their chargeTaken share, if any. None are built yet.
-    fn work_stakes(&self, _p: P) -> Option<f64> {
-        None
-    }
-
-    /// Cover from field works against an arrow from `from` to `to` (08-orders.md §7 hook): none yet.
-    fn work_cover(&self, _from: P, _to: P) -> f64 {
-        1.0
     }
 
     /// A man falls: he stays where he fell (§9), and his killer's company counts the kill.
@@ -462,7 +465,7 @@ impl Battle {
         s.detached = true;
         s.queue.clear();
         s.threat = None;
-        self.set_order(i, Order::Retreat, super::How::default());
+        self.set_order(i, Order::Retreat, None);
         if foe {
             for o in self.squads.iter_mut().filter(|o| o.team == team && o.id as usize != i && o.on_field() && o.kind != Kind::Captain) {
                 o.morale -= mo.foe_save_loss;

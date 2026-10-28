@@ -144,8 +144,14 @@ impl Bot {
         self.next = b.tick + ((period * crate::contracts::TICK_HZ as f64).round() as Tick).max(1);
         let mut out = Orders { deeds: Vec::new() };
         match self.kind {
-            BotKind::Garrison => garrison::think(b, self.team, &mut self.mem, &mut out),
-            BotKind::General(k) => general::think(b, self.team, k, false, &mut self.mem, &mut out),
+            BotKind::Garrison => {
+                garrison::think(b, self.team, &mut self.mem, &mut out);
+                raid_works(b, self.team, &mut out);
+            }
+            BotKind::General(k) => {
+                general::think(b, self.team, k, false, &mut self.mem, &mut out);
+                raid_works(b, self.team, &mut out);
+            }
             BotKind::Commander => general::think(b, self.team, 1, true, &mut self.mem, &mut out),
             BotKind::Charge => charge(b, self.team, &mut out),
             BotKind::Idle => {}
@@ -257,6 +263,33 @@ pub(crate) fn quarry<'a>(b: &Battle, i: usize, seen: &'a [Seen], from: P) -> Opt
     seen.iter().filter(live).filter(foot).filter(|f| !f.ranged).min_by(near).or_else(|| seen.iter().filter(live).filter(foot).min_by(near))
 }
 
+/// The blight goes for places and works, not the line (08-orders.md §7 "Enemy response"): for each field work of
+/// the foe's it sees, the nearest free company (standing, not fighting, melee foot that does not breathe) is sent at
+/// it, fighting; once there its men tear it down. Given after the bot's other deeds, so it stands this thought.
+pub(crate) fn raid_works(b: &Battle, team: Team, out: &mut Orders) {
+    let mut sent: Vec<usize> = Vec::new();
+    for w in b.works.iter().filter(|w| w.team != team && !w.razed && b.sees(team, w.at)) {
+        let free = companies(b, team).into_iter().filter(|&i| {
+            let s = &b.squads[i];
+            !sent.contains(&i) && s.state != crate::battle::SquadState::Fighting && !s.spec.ranged() && s.spec.breath == 0.0 && s.kind != Kind::Horse
+        });
+        let Some(i) = free.min_by(|&x, &y| b.centre(x).dist(w.at).total_cmp(&b.centre(y).dist(w.at)).then(x.cmp(&y))) else { continue };
+        let to = b.open_near(w.at);
+        let id = b.squads[i].id;
+        // Re-given when another deed this thought would order it elsewhere (a front, an army order, its own).
+        let touched = out.deeds.iter().any(|d| match d {
+            Deed::Front { .. } => true,
+            Deed::Move { who, .. } | Deed::Attack { who, .. } | Deed::Take { who, .. } | Deed::Hold { who } => *who == Who::Army || *who == (Who::Squad { id }),
+            _ => false,
+        });
+        let already = matches!(&b.squads[i].order, Order::Move { to: t, fight: true, .. } if t.dist(to) < 1.0);
+        if touched || !already {
+            out.push_always(Deed::Move { who: Who::Squad { id }, to, via: Vec::new(), fight: true, face: None });
+        }
+        sent.push(i);
+    }
+}
+
 /// `charge`: every company attacks the nearest foe it sees, or marches on the enemy's deploy point fighting; the
 /// captain rides with them once a foe is seen (an army attack puts him on his ride).
 fn charge(b: &Battle, team: Team, out: &mut Orders) {
@@ -271,7 +304,8 @@ fn charge(b: &Battle, team: Team, out: &mut Orders) {
     for i in companies(b, team) {
         let id = b.squads[i].id;
         let who = Who::Squad { id };
-        match nearest(&foes, b.centre(i), f64::INFINITY) {
+        // Its standing priority (nearest unless told otherwise, 08-orders.md §5).
+        match pick(b, team, &foes, b.centre(i), f64::INFINITY, b.squads[i].how.priority) {
             Some(f) => out.push(b, Deed::Attack { who, target: f.id, via: Vec::new() }),
             None => out.push(b, Deed::Move { who, to: goal, via: Vec::new(), fight: true, face: None }),
         }

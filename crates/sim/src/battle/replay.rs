@@ -36,11 +36,18 @@ pub struct Replay {
     /// symmetric human field of day 3.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub setup: String,
+    /// A held start (08-orders.md §8): nobody advances until "advance".
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub held: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl Replay {
     pub fn new(seed: u32, map: MapOpts) -> Replay {
-        Replay { seed, map, tick: 0, log: Vec::new(), tune: None, bots: Vec::new(), setup: String::new() }
+        Replay { seed, map, tick: 0, log: Vec::new(), tune: None, bots: Vec::new(), setup: String::new(), held: false }
     }
 
     pub fn from_json(json: &str) -> Result<Replay, String> {
@@ -53,7 +60,8 @@ impl Replay {
             Some(over) => Tune::with_override(over)?,
             None => Tune::default(),
         };
-        let mut b = Battle::new(self.seed, self.map, &Setup::named(&self.setup, self.map.kind)?, tune);
+        let setup = Setup { held: self.held, ..Setup::named(&self.setup, self.map.kind)? };
+        let mut b = Battle::new(self.seed, self.map, &setup, tune);
         for c in &self.log {
             b.apply(c.clone());
         }

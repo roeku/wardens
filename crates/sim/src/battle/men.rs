@@ -117,6 +117,7 @@ impl Battle {
         self.strikes.extend(d.burns);
         self.blows.extend(d.blows);
         if let Some(a) = d.arrow {
+            self.tally.arrows += 1;
             self.arrows.push(a);
         }
         if d.breath {
@@ -165,7 +166,7 @@ impl Battle {
                 return None;
             }
         } else {
-            let extra = if shoots { self.height_bonus(here, there, tune) } else { 0.0 };
+            let extra = if shoots { self.height_bonus(here, there, tune) + self.work_bonus(here, s.team, "range") } else { 0.0 };
             if d > range + extra {
                 return None;
             }
@@ -212,7 +213,7 @@ impl Battle {
 
         // Target: keep the current one within seek·1.3, else the best scored within seek.
         let mut target = None;
-        if !routing {
+        if !routing && r.strike {
             if let Some(t) = m.target
                 && self.may_target(k, t, tune, r, reach_only, range * c.keep_target, shoots).is_some()
             {
@@ -326,7 +327,7 @@ impl Battle {
                 let dmg = base * if ranged { s.spec.melee } else { 1.0 };
                 self.blow(k, t, dmg, charge, tune, &mut strikes, &mut blows);
                 cooldown = next();
-            } else if shoots && foe_dist <= s.spec.range + self.height_bonus(here, self.soldiers[t].pos(), tune) {
+            } else if shoots && foe_dist <= s.spec.range + self.height_bonus(here, self.soldiers[t].pos(), tune) + self.work_bonus(here, s.team, "range") {
                 let flight = (foe_dist * c.arrow_flight_k).max(c.arrow_flight_min);
                 arrow = Some(Arrow { from: here, x: here.x, y: here.y, target: t, shooter: k, dmg: base, t: 0.0, flight });
                 cooldown = next();
@@ -349,10 +350,12 @@ impl Battle {
 
         // Steering: the momentum model.
         let to_slot = here.dist(slot);
+        let marching = s.state == SquadState::Marching && !fighting && !routing;
         let speed = man_speed
             * catchup(mv, to_slot)
             * if routing { tune.morale.rout_speed } else { 1.0 }
-            * if recalling { tune.morale.recall_pace } else { 1.0 };
+            * if recalling { tune.morale.recall_pace } else { 1.0 }
+            * if marching { s.how.pace_k(tune) } else { 1.0 };
         let (v, heading, route) = self.steer(k, goal, speed, None, tune);
         Decision {
             target,

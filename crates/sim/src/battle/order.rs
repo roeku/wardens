@@ -1,16 +1,19 @@
 //! The order model (docs/spec/08-orders.md §1, §3, §5, §6; 04-battle.md §1 "Orders"). A squad's order is a verb
-//! (`Order`) plus the modifiers every verb shares (`How`), with a queue of pending orders, each released by a
-//! trigger (`When`). Stances are read in one place, `Battle::rules`; target priorities are scored in one place,
+//! (`Order`) plus the standing modifiers every verb shares (`How`), with a queue of waiting deeds, each released by
+//! a trigger (`When`). Stances are read in one place, `Battle::rules`; target priorities are scored in one place,
 //! `Battle::priority_score`, which the men, the squads and the bots all use.
 //!
-//! The Deeds that reach these from the order queue are the spec's seven for now; the order-language pass adds the
-//! rest (out/decisions-battle.md, "The order model").
+//! A company's way (`How`) stands until changed: `Set` changes it with no new order, `With` changes it for the
+//! companies its deed orders, and unset fields keep what the company had (out/decisions-orders-sim.md).
 
 use serde::{Deserialize, Serialize};
 
 use super::{Battle, SquadState};
-use crate::contracts::{Kind, P, SquadId, Team, Tick, Way};
+use crate::contracts::{self, Deed, Kind, P, SquadId, Team, Tick, Way};
+use crate::tune::Tune;
 use crate::units::Unit;
+
+pub use crate::contracts::{Pace, When};
 
 /// The verb: what a squad is doing.
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +32,16 @@ pub enum Order {
     Retreat,
     /// The captain's ride (§5).
     Ride,
+    /// Stand between `ward` and the nearest threat, or `from` (08-orders.md §3 "screen / cover").
+    Screen { ward: SquadId, from: Option<SquadId> },
+    /// Attack now, the cohesion gate ignored (08-orders.md §3 "charge").
+    Charge { target: SquadId },
+    /// Fall back fighting to `to`, still facing the foe (08-orders.md §3 "withdraw").
+    Withdraw { to: P },
+    /// Fall back behind the line to `to`, out of the fight, to recover morale (08-orders.md §3 "regroup").
+    Regroup { to: P },
+    /// Build (or help build) field work `work`, standing at `at` (08-orders.md §7).
+    Build { work: u16, at: P },
 }
 
 impl Order {
@@ -44,6 +57,26 @@ impl Order {
         match self {
             Order::Move { via, .. } | Order::Attack { via, .. } | Order::Take { via, .. } => Some(via),
             _ => None,
+        }
+    }
+
+    /// A short name, for the harness and logs.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Order::Hold { .. } => "hold",
+            Order::Move { .. } => "move",
+            Order::Attack { .. } => "attack",
+            Order::Take { .. } => "take",
+            Order::Follow => "follow",
+            Order::Guard { .. } => "guard",
+            Order::Recall { .. } => "recall",
+            Order::Retreat => "retreat",
+            Order::Ride => "ride",
+            Order::Screen { .. } => "screen",
+            Order::Charge { .. } => "charge",
+            Order::Withdraw { .. } => "withdraw",
+            Order::Regroup { .. } => "regroup",
+            Order::Build { .. } => "build",
         }
     }
 }
@@ -66,6 +99,18 @@ pub enum Stance {
     Passive,
 }
 
+impl From<contracts::Stance> for Stance {
+    fn from(s: contracts::Stance) -> Stance {
+        match s {
+            contracts::Stance::Normal => Stance::Normal,
+            contracts::Stance::Aggressive => Stance::Aggressive,
+            contracts::Stance::Defensive => Stance::Defensive,
+            contracts::Stance::HoldFire => Stance::HoldFire,
+            contracts::Stance::Skirmish => Stance::Skirmish,
+        }
+    }
+}
+
 /// Which foes a squad and its men prefer (08-orders.md §5 "priority"; §4 "targets").
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "t", rename_all = "lowercase")]
@@ -80,11 +125,11 @@ pub enum Priority {
     Ranged,
     /// "the most shaken": lowest morale share.
     Shaken,
-    /// "the weakest": least men × worth left.
+    /// "the weakest" or "the most shaken": least men × worth × morale share left.
     Weakest,
     /// "their strongest".
     Strongest,
-    /// "their commander": the captain first, then companies with a commander alive.
+    /// "their commander", "the broodlord": the captain first, then companies with a commander alive.
     Commander,
     /// "the ones attacking the mill / Oda": foes whose men are striking that company.
     Attacking { id: SquadId },
@@ -92,63 +137,122 @@ pub enum Priority {
     Squad { id: SquadId },
 }
 
-/// The formation's shape (08-orders.md §3 "form"); frontage is `How::files`, spacing `How::spacing`.
+impl Priority {
+    /// The contract's priority (08-orders.md §4–§5) in the sim's terms; `None` for a unit id that is not one.
+    pub fn from_contract(p: contracts::Priority) -> Option<Priority> {
+        Some(match p {
+            contracts::Priority::Nearest => Priority::Nearest,
+            contracts::Priority::Unit { unit } => Priority::Unit { unit: *Unit::ALL.get(unit as usize)? },
+            contracts::Priority::Weakest => Priority::Weakest,
+            contracts::Priority::Strongest => Priority::Strongest,
+            contracts::Priority::Commander => Priority::Commander,
+            contracts::Priority::Attacking { squad } => Priority::Attacking { id: squad },
+        })
+    }
+}
+
+/// The formation's shape (08-orders.md §3 "form"): its geometry and default frontage. Spacing is `How::spacing`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Shape {
+    /// §3a's block at the kind's own frontage.
     #[default]
     Block,
+    /// A block `orders.line_ranks` deep.
+    Line,
+    /// A block `orders.column_files` wide.
+    Column,
     /// Rank r holds 2r+1 men, the point at the anchor.
     Wedge,
-    /// A ring round a point behind the anchor; every man faces out.
+    /// A ring round a point behind the anchor ("square"); every man faces out.
     Ring,
+    /// A line `orders.line_ranks` deep at the tight spacing.
+    ShieldWall,
 }
 
-/// The modifiers every verb shares (08-orders.md §5). `How::default()` is 04-battle.md's behaviour.
+/// The standing modifiers every verb shares (08-orders.md §5). `How::default()` is 04-battle.md's behaviour.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct How {
     pub stance: Stance,
     /// Chase routers; `None` keeps the stance's default (only Aggressive pursues).
     pub pursue: Option<bool>,
-    /// A share of the squad's speed (walk, quick, double time); `None` is the spec's pace.
-    pub pace: Option<f64>,
+    /// Walk or double time; `None` is the spec's pace (quick).
+    pub pace: Option<Pace>,
     pub shape: Shape,
-    /// Frontage override (a drawn line's `files`).
+    /// Files in the front rank ("thin", "deep"); a drawn front's own frontage (`Squad::files`) comes first.
     pub files: Option<u16>,
     /// The file gap ×this (loose, tight).
     pub spacing: Option<f64>,
     pub priority: Priority,
 }
 
-/// What releases a pending order (08-orders.md §6). Every trigger reads only sim state; signals arrive as
-/// Commands through the queue, so replays stay exact.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "t", rename_all = "lowercase")]
-pub enum When {
-    /// When the current order completes (arrived, taken, target gone, recalled).
-    Done,
-    /// On the player's signal `n` ("on my mark… now!").
-    Signal { n: u16 },
-    /// `s` seconds after it was queued.
-    After { s: f64 },
-    /// An enemy within `r` of a point.
-    EnemyNear { at: P, r: f64 },
-    /// That company routs, flees or is destroyed.
-    Breaks { id: SquadId },
-    /// The captain was hit in the last second.
-    CaptainAttacked,
-    /// Nightfall (day 4's night; never yet).
-    Night,
+impl How {
+    /// Merges the contract's modifiers onto this way: unset fields keep what it had. A new shape clears a standing
+    /// frontage unless `files` comes with it; loose and tight change only the spacing.
+    pub fn merge(&mut self, h: &contracts::How, tune: &Tune) -> Result<(), String> {
+        let priority = match h.priority {
+            Some(p) => Some(Priority::from_contract(p).ok_or_else(|| format!("no unit {p:?}"))?),
+            None => None,
+        };
+        if h.files == Some(0) {
+            return Err("files: at least 1".into());
+        }
+        if let Some(s) = h.stance {
+            self.stance = s.into();
+        }
+        if let Some(p) = h.pace {
+            self.pace = if p == Pace::Quick { None } else { Some(p) };
+        }
+        if let Some(shape) = h.shape {
+            let mv = &tune.movement;
+            match shape {
+                contracts::Shape::Loose => self.spacing = Some(mv.loose_spacing),
+                contracts::Shape::Tight => self.spacing = Some(mv.tight_spacing),
+                other => {
+                    self.shape = match other {
+                        contracts::Shape::Line => Shape::Line,
+                        contracts::Shape::Column => Shape::Column,
+                        contracts::Shape::Wedge => Shape::Wedge,
+                        contracts::Shape::Square => Shape::Ring,
+                        _ => Shape::ShieldWall,
+                    };
+                    self.spacing = None;
+                    self.files = None;
+                }
+            }
+        }
+        if let Some(f) = h.files {
+            self.files = Some(f);
+        }
+        if let Some(p) = h.pursue {
+            self.pursue = Some(p);
+        }
+        if let Some(p) = priority {
+            self.priority = p;
+        }
+        Ok(())
+    }
+
+    /// The pace as a share of the company's speed.
+    pub fn pace_k(&self, tune: &Tune) -> f64 {
+        let o = &tune.orders;
+        match self.pace {
+            None | Some(Pace::Quick) => o.pace_quick,
+            Some(Pace::Walk) => o.pace_walk,
+            Some(Pace::Double) => o.pace_double,
+        }
+    }
 }
 
-/// An order waiting in a squad's queue.
+/// A deed waiting for its trigger (08-orders.md §6), in a company's queue or its army's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pending {
-    pub order: Order,
-    pub how: How,
+    pub deed: Deed,
     pub when: When,
     pub queued: Tick,
+    /// Its signal was given (a `Signal` command after it was queued).
+    pub signalled: bool,
 }
 
 /// The engagement rules a squad follows this tick: every stance and order check lives here.
@@ -168,8 +272,10 @@ pub struct Rules {
     pub leash: Option<(P, f64)>,
     /// Ranged fall back from melee foes within this.
     pub skirmish: Option<f64>,
-    /// No charges (a recall).
+    /// No charges (a recall, a regroup, a withdrawal).
     pub no_charge: bool,
+    /// Men strike at all: a company at work on a field work cannot fight (08-orders.md §7).
+    pub strike: bool,
 }
 
 impl Battle {
@@ -189,7 +295,8 @@ impl Battle {
             pursue: false,
             leash: None,
             skirmish: None,
-            no_charge: matches!(s.order, Order::Recall { .. }),
+            no_charge: matches!(s.order, Order::Recall { .. } | Order::Regroup { .. } | Order::Withdraw { .. }),
+            strike: true,
         };
         match s.how.stance {
             Stance::Normal => {}
@@ -218,6 +325,16 @@ impl Battle {
             }
             Stance::Passive => r.engage = 0.0,
         }
+        // The reserve is held back: it fights only what reaches it (08-orders.md §3 "reserve").
+        if s.reserve.is_some() && !s.spec.ranged() {
+            r.engage = r.engage.min(c.reach + c.walk_line_beyond);
+        }
+        // At work on a field work it cannot fight (08-orders.md §7).
+        if s.working {
+            r.engage = 0.0;
+            r.fire = false;
+            r.strike = false;
+        }
         if r.engage == 0.0 {
             r.reach_only = true;
         }
@@ -228,11 +345,12 @@ impl Battle {
     }
 
     /// 04-battle.md §5 "Who may engage": not a march without fight, not a retreat, not a recall; a follower
-    /// engages when its army's march fights or it stands at its station; 08-orders' escort defends its ward.
+    /// engages when its army's march fights or it stands at its station; 08-orders' escort defends its ward. A
+    /// withdrawal, a regroup and a company going to build strike only in passing.
     fn may_engage(&self, i: usize) -> bool {
         let s = &self.squads[i];
         match &s.order {
-            Order::Retreat | Order::Recall { .. } => false,
+            Order::Retreat | Order::Recall { .. } | Order::Withdraw { .. } | Order::Regroup { .. } | Order::Build { .. } => false,
             // Riding round to the flank he does not stop to fight; he goes in once there.
             Order::Ride => !s.ride.out && (s.ride.target.is_none() || s.ride.went_in),
             // A move is always on its way (arrival turns it into a hold): it engages only if it fights.
@@ -251,6 +369,11 @@ impl Battle {
         }
     }
 
+    /// The pace of squad `i` as a share of its speed (08-orders.md §5 "pace").
+    pub(super) fn pace_k(&self, i: usize) -> f64 {
+        self.squads[i].how.pace_k(&self.tune)
+    }
+
     /// The priority score of foe squad `j` seen from `from` (lower is better): the distance, less
     /// `priority_bonus` for a favoured foe, or scaled by the measure the priority names.
     pub fn priority_score(&self, team: Team, from: P, j: usize, pri: Priority) -> f64 {
@@ -266,16 +389,20 @@ impl Battle {
             Priority::Squad { id } => fav(f.id == id),
             Priority::Shaken => d + bonus * f.morale_share(),
             Priority::Weakest | Priority::Strongest => {
-                let most = self
-                    .squads
-                    .iter()
-                    .filter(|o| o.team != team && o.on_field())
-                    .map(|o| o.strength(&self.tune))
-                    .fold(1e-9, f64::max);
-                let share = f.strength(&self.tune) / most;
+                let worth = |o: &super::Squad| o.strength(&self.tune) * if pri == Priority::Weakest { o.morale_share() } else { 1.0 };
+                let most = self.squads.iter().filter(|o| o.team != team && o.on_field()).map(worth).fold(1e-9, f64::max);
+                let share = worth(f) / most;
                 if pri == Priority::Weakest { d + bonus * share } else { d - bonus * share }
             }
-            Priority::Commander => fav(f.kind == Kind::Captain || f.leader.is_some()),
+            Priority::Commander => {
+                if f.kind == Kind::Captain {
+                    d - bonus
+                } else if f.leader.is_some() {
+                    d - bonus / 2.0
+                } else {
+                    d
+                }
+            }
             Priority::Attacking { id } => fav(self.attackers_of(id).contains(&f.id)),
         }
     }
@@ -295,49 +422,76 @@ impl Battle {
         out
     }
 
-    /// Whether a pending order's trigger holds now.
-    pub(super) fn triggered(&self, i: usize, p: &Pending) -> bool {
-        let s = &self.squads[i];
+    /// Whether a waiting deed of `team` fires now; `done` is whether its company's (or its army's captain's)
+    /// current order has completed.
+    pub(super) fn fires(&self, team: Team, done: bool, p: &Pending) -> bool {
         match &p.when {
-            When::Done => s.done,
-            When::Signal { n } => self.signals[s.team as usize].iter().any(|&(k, at)| k == *n && at >= p.queued),
-            When::After { s: secs } => (self.tick - p.queued) as f64 * super::DT >= *secs,
-            When::EnemyNear { at, r } => self.soldiers.iter().any(|m| m.alive && self.squads[m.squad as usize].team != s.team && m.pos().dist(*at) <= *r),
-            When::Breaks { id } => self.squads.get(*id as usize).is_some_and(|o| !matches!(o.state, SquadState::Idle | SquadState::Marching | SquadState::Fighting)),
-            When::CaptainAttacked => self.captain_of(s.team).is_some_and(|c| {
+            When::Done => done,
+            When::Signal { .. } => p.signalled,
+            When::After { s } => self.tick.saturating_sub(p.queued) as f64 * super::DT >= *s,
+            When::EnemyNear { at, r } => {
+                let mut near = false;
+                self.grid.visit(*at, *r, |k| {
+                    let m = &self.soldiers[k];
+                    near |= m.alive && self.squads[m.squad as usize].team != team && m.pos().dist(*at) <= *r;
+                });
+                near
+            }
+            When::Breaks { squad } => self.squads.get(*squad as usize).is_some_and(|o| matches!(o.state, SquadState::Routing | SquadState::Fled | SquadState::Destroyed)),
+            When::CaptainAttacked => self.captain_of(team).is_some_and(|c| {
                 let m = &self.soldiers[self.squads[c].soldiers[0]];
                 m.hit_at != Tick::MAX && self.tick.saturating_sub(m.hit_at) <= super::TICK_HZ
             }),
-            When::Night => self.night,
+            When::Nightfall => self.night,
+            When::Dawn => self.dawn,
         }
     }
 
-    /// Releases the first pending order of every squad whose trigger holds (tick step 2, before the anchors).
+    /// Tick step 2, before the anchors: for every company (in id order), then every army, the first waiting deed
+    /// whose trigger holds is carried out, keeping the rest of the queue.
     pub(super) fn release_pending(&mut self) {
         for i in 0..self.squads.len() {
-            if self.squads[i].queue.is_empty() || !self.squads[i].on_field() || self.squads[i].state == SquadState::Routing {
+            let s = &self.squads[i];
+            if s.queue.is_empty() || !s.standing() {
                 continue;
             }
-            let p = self.squads[i].queue[0].clone();
-            if self.triggered(i, &p) {
-                self.squads[i].queue.remove(0);
-                self.set_order(i, p.order, p.how);
+            let (team, done) = (s.team, s.done);
+            let Some(k) = s.queue.iter().position(|p| self.fires(team, done, p)) else { continue };
+            let p = self.squads[i].queue.remove(k);
+            self.release(team, &p.deed);
+        }
+        for team in 0..2u8 {
+            if self.waiting[team as usize].is_empty() {
+                continue;
             }
+            let done = self.captain_of(team).is_some_and(|c| self.squads[c].done);
+            let Some(k) = self.waiting[team as usize].iter().position(|p| self.fires(team, done, p)) else { continue };
+            let p = self.waiting[team as usize].remove(k);
+            self.release(team, &p.deed);
         }
     }
 
-    /// Queues `order` for squad `i`, released by `when` (08-orders.md §6). Signals and conditions are evaluated
-    /// in the tick from sim state only.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn queue_order(&mut self, i: usize, order: Order, how: How, when: When) {
-        let queued = self.tick;
-        self.squads[i].queue.push(Pending { order, how, when, queued });
+    /// A waiting deed runs: obeyed as if given now, except that it keeps the queues it lands in.
+    fn release(&mut self, team: Team, deed: &Deed) {
+        self.releasing = true;
+        let r = self.obey(team, deed);
+        self.releasing = false;
+        if let Err((at, why)) = r {
+            self.refuse(team, at, why);
+        }
     }
 
-    /// Raises signal `n` for `team` ("now!"): waiting orders with that signal run this tick.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn raise_signal(&mut self, team: Team, n: u16) {
-        self.signals[team as usize].push((n, self.tick));
+    /// Raises signal `n` for `team` ("now!"): its waiting deeds on that signal run this tick (08-orders.md §6).
+    pub(crate) fn raise_signal(&mut self, team: Team, n: u8) {
+        let on = |p: &mut Pending| {
+            if p.when == (When::Signal { n }) {
+                p.signalled = true;
+            }
+        };
+        for s in self.squads.iter_mut().filter(|s| s.team == team) {
+            s.queue.iter_mut().for_each(on);
+        }
+        self.waiting[team as usize & 1].iter_mut().for_each(on);
     }
 }
 

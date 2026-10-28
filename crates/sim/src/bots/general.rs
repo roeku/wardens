@@ -172,8 +172,8 @@ pub(super) fn think(b: &Battle, team: Team, skill: u8, take_keep: bool, mem: &mu
                 continue;
             }
         }
-        // Skill 2 focuses wavering foes: the "most shaken" priority.
-        let pri = if skill >= 2 { Priority::Shaken } else { Priority::Nearest };
+        // Skill 2 focuses wavering foes: the "most shaken" priority; otherwise the company's own (nearest unless told).
+        let pri = if skill >= 2 { Priority::Shaken } else { s.how.priority };
         match pick(b, team, &foes, here, g.attack_r, pri) {
             Some(f) => out.push(b, Deed::Attack { who, target: f.id, via: Vec::new() }),
             None => {
