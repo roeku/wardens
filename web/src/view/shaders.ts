@@ -9,7 +9,7 @@ void main() {
 }`;
 
 /** The 4×4 Bayer matrix used everywhere: fog, marks, ground paint and night. */
-const BAYER = /* glsl */ `
+export const BAYER = /* glsl */ `
 const int BAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
 float bayer4(vec2 c) {
   ivec2 i = ivec2(mod(c, 4.0));

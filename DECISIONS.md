@@ -144,3 +144,123 @@ One entry per decision, newest at the bottom. Format:
 - Chat mode end to end: its reasoning makes it 21–50 s per order locally (D-03).
 **Rejected:** relying on the template's reasoning controls (D-03); the full Double Metaphone (several hundred lines for one test case that Levenshtein already covers).
 **Spec:** docs/spec/06-voice.md §2, §4–§6, §9; docs/voice-eval/*.
+
+## D-08 | 2026-10-28 | Day 2 part A: the land (03-land §4–§6, §10; 02-look §3–§4)
+**Summary:**
+- `sim::land::make(&BattleMap)` paints the MEADOW ground at 12 texels per tile over the map plus 18 tiles of country, extends the heights and places the scatter. The view draws the painted mesh, water, instanced scatter and the fog patch.
+- Built by a delegated agent; checked again before commit.
+**Gate (measured):**
+- **Shimmer:**
+  - The agent: 0 stray frames at zooms 7, 16 and 34 on keep/48, ford/48 and keep/80.
+  - My re-check: seed 9 at zooms 9, 19 and 28, east and north, gave 49 shifted frames, 0 stray pixels and 0 changes without a shift.
+- **Time to make the land:**
+  - Native release: 15.5, 21.4 and 27.4 ms for widths 48, 64 and 80.
+  - WASM warm: 18, 25 and 33 ms. Under heavy machine load: 46, 62 and 82 ms.
+  - So it runs in a module worker by default (`?land=inline` to compare). Inline and worker output are byte-identical.
+- **Hashes:** the land hash is golden-checked natively and in WASM (`crates/sim-wasm/tests/land.rs`). The replay golden hashes are unchanged.
+**Open:**
+- The drawn river is about one tile wider than the rules' 2-tile river (the §3d relief carves round the water mask), so men on Open tiles by the bank may seem to stand in water. Settle this before day 3's movement is judged on screen.
+- Roads follow A*, which ignores height, so they can run down crag slopes.
+- Figures need `patchFog` to get fog and the vertex snap.
+
+# Day 2 part A (land): choices the spec left open
+
+### The land's contract between Rust and the view
+**Decision:**
+- `sim::land::make(&BattleMap) -> Land` (MEADOW; `make_with` takes another `Scape`). `Land` holds the RGBA ground (`ew·12 × eh·12`, rows from the north), the extended heights (`(2ew+1) × (2eh+1)`), a per-tile water-quad mask, the roads, the fields, and five instanced parts (`wood` boxes, `leaf` icosahedra, `tier` 7-sided cones, `stone` dodecahedra, `hay` cones), each as flat `mat` (16 floats per instance, column-major as three.js stores it, `T·Ry(yaw)·Rz(tilt)·S`) and `col` (3 floats, the hex value /255, unconverted).
+- WASM: `Battle.land()` (inline) and `Battle.map_json()` + `new Land(map_json)` (worker). Buffers come out once through `take_*`, so the worker transfers them without a second copy. `Land.hash()` is FNV-1a over everything drawn.
+- The seed comes from the map (`BattleMap.seed`), so ENGINE.md's `Land::make(map_json, seed)` is `new Land(map_json)`.
+**Why:** the view writes the buffers straight into `InstancedMesh.instanceMatrix`/`instanceColor`; no per-instance work on the main thread. Rust builds the matrices because §10 says the worker builds "the instanced tree matrices".
+**Rejected:** compact (x, y, scale, yaw) records expanded in TypeScript (main-thread work per battle); one JSON blob (slow, and floats would round-trip through text).
+**Spec:** 03-land.md §4–§5, §10; docs/engine/ENGINE.md "Land".
+
+### Land constants are named consts, not tuning
+**Decision:** every land number is a `const` in `crates/sim/src/land/*`, and the MEADOW table is `scape::MEADOW`, as the map's constants are (D-05).
+**Why:** they define what a seed's land looks like; a JSON override would silently change every replay's picture.
+**Rejected:** a JSON tuning table.
+**Spec:** AGENTS.md "every number named"; D-05.
+
+### Noise salts and frequencies the spec doesn't give
+**Decision:**
+- Where the spec writes `fbm(seed+k, …)` without a salt, the salt is k (as the relief does: `fbm(seed+1, …, 1)`, `fbm(seed+4, …, 4)`): rise `seed+2/2`, outside wood `seed+3/3`, species `seed+7/7`, rock `seed+9/9`, lakes `seed+12/12`, pools `seed+13/13`, patch `seed+5/5`, dry `seed+6/6`, meadow `seed+11/11`. Peak ridges use `noise(seed, ·0.16, 14)`.
+- Edge warp `noise(seed, 1.7x, 1.7y, 71 | 72)`; a `fine` noise (single octave, 0.8/tile, salt 73) for texture inside a ramp; a `wob` noise (1.3/tile, salt 74) for the road's `.44 ± .08` width, the yard's `± 0.3` wobble and the shore line; cracks `noise(seed, 3.5x, 3.5y, 75)`.
+- Hash salts: river 31, fields 41–43, lichen 76, ford pebbles 77, tufts 78, flowers 79–80, scatter 91–92.
+- All noise grids (warp, patch, dry, meadow, fine, wob) are sampled at quarter tiles and read bilinearly; the texel loop pre-interpolates each texel row.
+**Why:** consistency with the existing relief code; the quarter-tile grids keep `make` at 15–27 ms natively.
+**Rejected:** per-texel noise for the warp (≈2× slower).
+**Spec:** 03-land.md §2, §4.
+
+### Outside the map: river, relief and the seam
+**Decision:**
+- The river runs on past the north and south edges as a random walk like the map's own (drift chance 0.3 per row), held within ±2 columns of where it left the map.
+- The outside relief is the §4 formula (base `·0.9`, rising ground, peaks) **plus** the map's hills and the §3d tile-mask terms over the extended grid (rock crags, wood +0.12, water carve, `max(h, WATER_Y+.08)` away from water). The rising ground and peaks are multiplied by `1 − water` so the river cuts a valley through them, and over the river's own tiles (water mask > 0.45) the bed is held at `WATER_Y − 0.05 − (mask − 0.45)·0.6`.
+- Inside the map the heights are the map's exactly (tested bit for bit); outside, `lerp(edge height, outside height, smoothstep(0, 2, out))`, with the edge height read at the nearest point of the map.
+**Why:** without the carve the outside river climbed out of the rising bowl and dried up 2–3 tiles past the edge; without the masks, outside rocks were flat paint.
+**Rejected:** the bare §4 formula (dry river, flat rocks); a river that keeps going straight.
+**Spec:** 03-land.md §3d, §4 "Outside the map".
+
+### Roads
+**Decision:**
+- The assault map's main road: west edge at the deploy row → the other sites in order of x, taking a site only when it lies ahead within 45° (`|dy| ≤ dx`) of the last stop → the keep. The rest get spurs (A* to the nearest point of the main road). The keep's road east goes to the edge tile on the keep's row, else the nearest open row within ±3.
+- Routing is the rules' own A* (`map::path::astar`), so roads cross rivers only at fords; then densified to 0.5 tiles and smoothed (6 passes, factor 0.5, never onto water or rock).
+- A road ending within 1 tile of an edge runs straight on to the end of the painted country (18 tiles), and outside the map woods and rock are cleared within 1.5 tiles of it.
+**Why:** "through the sites in order of x" plus "the other sites get spurs" needs a rule for which sites are on the main road; the 45° rule gives one winding road instead of a zig-zag between top and bottom villages.
+**Rejected:** the main road through every site (zig-zags across the map); roads stopping at the map's edge.
+**Spec:** 03-land.md §4 "Roads".
+
+### Fields
+**Decision:** farmed points are villages and towns (+1.6 distance for a town), `m.farms`, and the farmland grid (none in MEADOW). Fields are axis-aligned rectangles; "on Open tiles only" means every tile under the rectangle is Open (rules road tiles excluded); the road gap is measured from the rectangle to the road's segments (sampled every 0.1 tile). The 14 beyond the map get up to 400 tries, each lying wholly at least 1 tile past the edge.
+**Why:** the spec gives the sizes, distances and gaps but not the shape or how the gaps are measured.
+**Rejected:** rotated fields (the stripes and furrows would alias on the 12-texel grid).
+**Spec:** 03-land.md §4 "Fields".
+
+### Ground painting details
+**Decision:**
+- Precedence per texel: water bed > ford > yard > road > field > rock > forest floor > grass. Water, ford, rock and wood come from the warped tile; road, field and yard from unwarped distances (straight field edges, smooth roads).
+- Ramp positions for the classes the spec gives no formula for: forest floor `(patch−.3)·1.6 + (fine−.5)·.3` (moss); rock `.55 + (fine−.5)·.7 + (patch−.5)·.4`, a moss cap where the slope is under 0.45, lichen on 3% of texels; bed `.3 + fine·.5`; ford pebble `.5 + (fine−.5)·.6` + per-texel jag; road `.5 + (fine−.5)·.4`, ruts −0.45, pale edges +0.3; yard `.5 + (fine−.5)·.5 + (patch−.5)·.3`; field stripes ± `(fine−.5)·.15`, furrow 0.09 tiles wide.
+- "Near a road" (+0.14) is within 1 tile of the centre line. Worn verges (`dirt[2]`) fade out over 0.14 tiles past the road's edge, dithered. The dry ramp's threshold is dithered over ±0.02 so dry patches stipple at their edge.
+- Pebble shores: grass on tiles within 2 of water whose ground lies below `WATER_Y + 0.1 ± 0.04`, so the pebbles follow the real waterline (the relief's carve makes the visible water wider than the river's two tiles).
+- Tufts: the light blade (`grass[4]`) in the cell's x 1..2 / y 0..1, its dark root (`grass[0]`) at (x−1, y+1), which is straight below it on screen. Flowers: the 25% neighbour is the patch east or south. Tufts and flowers only on plain grass (not verges or shores).
+- Bare earth, bog, snow and scree are left out: MEADOW has them off (9), and their ramps are incomplete in the spec.
+**Why:** the spec lists the classes and ramps; these fill the gaps so the picture matches the references.
+**Rejected:** pebble shores by distance to water tiles (they ended up under the water).
+**Spec:** 03-land.md §4 "Ground painting", §6; 02-look.md §4.
+
+### Scatter details
+**Decision:**
+- `lone: [.018, .05]` is [chance per open tile inside the map, outside it], of oak. "Otherwise a bush, otherwise a small stone" uses one roll: bush 0.07, small stone 0.05 after the lone-tree chance.
+- Oak: trunk 0.5s, crown radius r = 0.36s, blobs (in r over the trunk top) two low at (±0.47, 0.15–0.2) ×0.7, a broad middle at 0.62 ×(1.12, 0.86, 1.12), two small on top at ~1.15 ×0.58; ramp steps base+0/+0/+1/+2/+2 with base 0–2 per tree. Pine: each tier turned a further 0.45 rad so the seven sides don't line up; the upper two tiers one needle step lighter. Bushes centred 0.45s above the ground, stones 0.2s, with ±0.25 rad tilt and a random yaw. Trunks, posts and walls sink 0.04 into the ground.
+- Fences: posts every ~0.36 (rounded to fit the side), two rails per gap between posts, each following the slope. Hedge bushes are scale 0.2–0.28. Haystacks stand at least 0.4 inside the field. Poplars and dry-stone walls are built for lands that use them (not MEADOW).
+- Crowns and bushes use an icosahedron with smooth normals (the vertex direction), so they read round under the toon ramp.
+**Why:** the spec gives the shapes and sizes, not the layout inside a tree or the bush/stone rates; these match the references' density.
+**Rejected:** flat-faced crowns (gem-like); full random rotation of stones (the 0.7 flattening ends up sideways).
+**Spec:** 03-land.md §4 "Scatter", §5, §6; 02-look.md §9 "Round, not boxy".
+
+### Water
+**Decision:** the bed band mixes the painted ground texel (bed, pebble or shore) 72% toward the shallow colour; band edges are dithered over ±0.03 of depth; glints are 0.8% of 1/6-tile cells, drifting (0.11, 0.05) tiles/s, only past the bed band. The heights are a float32 texture read with `texelFetch` on the terrain mesh's own two triangles per cell, instead of a linearly filtered half-float. Time comes from `View.time`, advanced by the frame loop, never by `render()`.
+**Why:** depth then matches the drawn ground exactly at the shore; a frozen clock keeps the shimmer test meaningful.
+**Rejected:** a half-float with bilinear filtering (the shoreline disagreed with the mesh by up to a few hundredths).
+**Spec:** 03-land.md §5 "Water".
+
+### Fog details
+**Decision:** `greyed(c, k) = mix(c, luma(c), k)` with the pause pass's luma weights (0.3, 0.55, 0.15). Every dither (fog levels, haze steps, water bands) is indexed by the world-fixed pixel `floor(gl_FragCoord) + uOrigin`. `patchFog(material, {surface, speckle, coat})` lives in `web/src/view/fog.ts`; `setFog(levels)` takes one byte per tile (0/1/2); until sight is simulated everything is in sight. `__v.fog('bands' | 'ring' | 'sight')` shows the three levels.
+**Why:** the spec names `greyed` without defining it; the luma weights are the ones the look already uses.
+**Rejected:** a separate luma (Rec. 709) for the fog only.
+**Spec:** 02-look.md §3 "Fog of war"; 03-land.md §8.
+
+### Pixel-stable land: surfaces rebuilt from the world-fixed pixel
+**Decision:** every land material rebuilds its surface point instead of trusting interpolated varyings:
+1. The pixel `W = floor(gl_FragCoord) + uOrigin` always looks down the same world ray. The terrain intersects that ray with its own triangle's plane (corner heights by `texelFetch`), and takes its texel, its vertex normal (interpolated at that point from a normal texture), its shadow lookup and its depth (`gl_FragDepth`, exact because the camera sits on a fixed plane, D-06) from that point. The water does the same on the plane `y = WATER_Y`.
+2. Instanced shapes carry their whole triangle on every vertex (`faceGeometry`), so the face plane, the point, the barycentric normal, the speckle cell (`floor(P·11)`, as the spec says), the coat and the depth are the same in every frame.
+3. Every land vertex's clip position is rebuilt from its world-fixed screen coordinates (RIGHT/UP ×s), rounded to 1/256 art pixel, minus the whole-pixel origin, so the rasterizer covers and interpolates identically in every frame.
+4. The camera's rotation is a constant quaternion (`lookAt` rebuilt it each frame with wobbling last bits); instance colours are `flat`; the hemisphere light's weight is rounded to 1/1024 (far below one colour step).
+`camera.ts` only gained `export` on `BACK`, which the exact depth needs.
+**Why (measured with `__v.shimmer`, 80 steps of 0.1 px):** with the painted texture on plain interpolation, every changed frame had strays: up to 14–19 pixels at zoom 7 and 16, 3–4 at zoom 34. Step by step: exact texel lookup 19→3; screen-locked speckle and exact depth → 1-pixel, 1/255 lighting flips; constant rotation, exact normals and the clip snap → **0 stray frames** at zooms 7, 16 and 34 in four directions on keep/48, and in two directions on ford/48 and keep/80. The cost is under 1 ms per frame on the M5 at art resolution.
+**Rejected:** accepting the strays (D-06 accepted 9 single pixels on flat ground; the painted land had hundreds); speckle on screen-space blocks (stable, but not world-fixed as the spec asks).
+**Spec:** 02-look.md §2 "Pixel snapping", §9 "Never shimmer"; DECISIONS.md D-06.
+
+### Land off the main thread
+**Decision:** the land is made in a module Web Worker (`web/src/view/land-worker.ts`) by default, loading the same WASM and transferring every buffer; `?land=inline` makes it on the main thread. Inline and worker results are byte-identical (checked on keep/48, ford/48, keep/80), and the native and WASM hashes match a golden file (`crates/sim-wasm/tests/land.hashes`, run natively by `cargo test` and in WASM by `npm run test:wasm`). Keeping 4 ready lands and requesting the next one ahead (§10) waits for the campaign.
+**Why (measured):** native `make` 15.5 / 21.4 / 27.4 ms for widths 48 / 64 / 80; WASM in the browser 18 / 25 / 33 ms warm, 20 / 28 / 38 ms in a cold worker (37–44 ms round trip). Under load (other jobs at load average 50–90) the same WASM took 46 / 62 / 82 ms, and the very first call on a cold page 163 ms; an old phone is 5–10× slower still. §10 asks for the worker from day one.
+**Rejected:** inline only (over 50 ms for 64 and 80 under load, and the spec measured 1.4–2.3 s on an old phone).
+**Spec:** 03-land.md §10; docs/engine/ENGINE.md "Performance" 2.

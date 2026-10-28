@@ -4,6 +4,7 @@
 pub mod battle;
 pub mod contracts;
 pub mod hash;
+pub mod land;
 pub mod map;
 pub mod math;
 pub mod rng;

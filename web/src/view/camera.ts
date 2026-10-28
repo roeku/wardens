@@ -15,7 +15,8 @@ export const UP = FWD.clone().multiplyScalar(SIN_PITCH).add(new THREE.Vector3(0,
 export const VIEW = FWD.clone().multiplyScalar(Math.cos(PITCH)).add(new THREE.Vector3(0, -SIN_PITCH, 0));
 export const NEAR = 1;
 export const FAR = 320;
-const BACK = 150;
+/** The camera stands on a fixed plane this far back along the view (DECISIONS.md D-06). */
+export const BACK = 150;
 const EDGE_SLACK = 2;
 const FOLLOW_RATE = 3;
 
