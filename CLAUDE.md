@@ -5,8 +5,10 @@ Read and follow `AGENTS.md`. It holds the rules for this repository.
 |---|---|
 | `npm run sim` | build the WASM sim into `web/src/sim-pkg` |
 | `npm run dev` | the game on localhost (Vite), with the `/brain`, `/stt`, `/__shot` and `/__sound` middleware |
-| `cargo test` | sim tests, including determinism |
-| `cargo run -p harness -- play <session> …` | play headless |
+| `cargo test` | sim tests, including determinism against the golden hashes (`UPDATE_GOLDEN=1` rewrites them) |
+| `npm run test:wasm` | the same determinism replay compiled to WASM, under Node |
+| `cargo run -p harness -- play <session> new <seed>` then `do <order>`, `wait <s>`, `look`, `undo` | play headless; `look` draws `out/look/<session>.png` |
+| `cargo run -p harness -- hashes <replay.json>` | a replay's map and state hashes |
 | `cargo run -p harness -- sweep …` | balance sweeps |
 | `npm run voice-eval` | the 20-command voice test against the brain at `$BRAIN_URL` (default `http://127.0.0.1:8080`) |
 

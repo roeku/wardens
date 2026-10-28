@@ -44,3 +44,43 @@ One entry per decision, newest at the bottom. Format:
 **Why:** matches ENGINE.md's architecture and the commands the repo's docs already name. Release WASM is 13.7 kB at this stage.
 **Rejected:** separate `web/package.json` (two install steps, and the documented commands would need a `cd`).
 **Spec:** docs/engine/ENGINE.md "Architecture", "Toolchain".
+
+## D-05 | 2026-10-28 | Day 1 block B: what the spec left open in the core, the maps and the battle skeleton
+**Decision:**
+- **Map constants are named `const`s, not JSON tuning.** They define what a seed's map is, so overriding them would silently change every replay's map. Balance and movement numbers live in `tune.rs` (`PROTO_TUNE`).
+- **Assault map (03-land §3a):**
+  - Forest blobs use the rocks' y range, `2 + r·(H−4)`.
+  - Blobs only cover open ground, never water, road or each other.
+  - Village pairs split the 0.3W span into one band per pair. Shrines use `y = 2 + r·(H−4)`. Towers alternate flanks (0.1–0.3H, then 0.7–0.9H), with a random first flank.
+  - A site gets up to 12 tries. A spot is rejected if there is water within its 2.2 clearing (clearing it would cut the river). The clearing removes rock and forest only. A site with no valid spot is left out; that never happened in 180 test maps.
+- **Ford map (03-land §3b):**
+  - The narrow ford is at 0.1–0.18H or 0.82–0.9H.
+  - People enter at the east edge and leave at the west edge, on the main ford's row. Route tiles become road.
+  - The warband deploys on the west bank at (0.3W, ford row). The raiders' deploy point, (W−4.5, 3.5), is provisional until the ford battle (day 4).
+- **Relief (03-land §3d):** a tile mask takes the strongest cone, not the sum. A site's pad height is the raw height at its centre.
+- **Battle skeleton (04-battle §1):**
+  - The state hash is 64-bit FNV-1a over the tick and every squad's and soldier's state, floats by their bits.
+  - Commands due at or before the current tick are applied in arrival order before the tick runs.
+  - Every command is logged, refused or not; a refusal also raises a `Refused` event.
+  - A company's men include its commander, soldier 0, who has 3× hp.
+- **Until day 3 (temporary behaviour):**
+  - An army order sends each company with the army to its fixed station around the destination, turned to the march heading; following the captain comes on day 3.
+  - A drawn front marches the army to the line's middle; `planFront` comes on day 3.
+  - An attack closes to melee range (2.6).
+  - Beast stats are a placeholder.
+- **Default setup, provisional until the muster and garrisons land (day 5):**
+  - The voice fixture's warband: WIL spear, ODA shield, REN archer, BORS horse, and the captain, in the §3d line stations, facing the enemy.
+  - Against it, 3 companies of blight-men (levy stats) in a line 2.5 tiles before the keep.
+- **Harness:**
+  - Sessions are `Replay` JSON in `out/sessions/`: seed, map, tick, log, and the optional tune override.
+  - `do` stamps the current tick and reports a refusal at once. `undo` drops the last command and keeps the clock.
+  - `look` draws `out/look/<session>.png` at 12 px per tile.
+- **Determinism checks:**
+  - One golden file, `crates/sim/tests/fixtures/replay.hashes`, is checked natively (`cargo test`) and in WASM under Node (`npm run test:wasm`). Rewrite it with `UPDATE_GOLDEN=1` after a deliberate rule change.
+  - `clippy.toml` forbids the platform maths functions (`f64::sin` and friends, `powi`, `hypot`) and `HashMap`/`HashSet`.
+**Why (gate, measured):**
+- The fixture's map hash and 7 state hashes over 60 s and 11 commands (2 refused) are identical natively, in debug WASM under Node, and in release WASM in the browser.
+- 1,800 ticks replay in 24 ms in the browser.
+- `hash32` and `Rng` match the spec's JS formula on reference values. 180 maps (3 kinds × 3 widths × 20 seeds) are valid, with every site reachable.
+**Rejected:** a shared-output script that diffs native against WASM at run time (needs file access from the WASM test); FNV-1a 32-bit (more collisions for no gain).
+**Spec:** docs/spec/03-land.md §1–§3, docs/spec/04-battle.md §1–§3, docs/spec/01-flow.md §8.

@@ -1,0 +1,18 @@
+{
+  "seed": 4,
+  "map": { "kind": "keep", "width": 48 },
+  "tick": 1800,
+  "log": [
+    { "tick": 15, "team": 0, "deed": { "do": "move", "who": { "t": "army" }, "to": { "x": 20.0, "y": 13.5 } }, "src": "tap" },
+    { "tick": 120, "team": 0, "deed": { "do": "move", "who": { "t": "squad", "id": 4 }, "to": { "x": 18.0, "y": 6.0 }, "via": [{ "x": 12.0, "y": 8.0 }] }, "src": "drag" },
+    { "tick": 300, "team": 1, "deed": { "do": "attack", "who": { "t": "squad", "id": 5 }, "target": 1 }, "src": "bot" },
+    { "tick": 450, "team": 0, "deed": { "do": "hold", "who": { "t": "squad", "id": 2 } }, "src": "tap" },
+    { "tick": 600, "team": 0, "deed": { "do": "recall", "id": 4 }, "src": "tap" },
+    { "tick": 750, "team": 0, "deed": { "do": "front", "line": [{ "x": 19.0, "y": 10.0 }, { "x": 19.0, "y": 17.0 }] }, "src": "line" },
+    { "tick": 900, "team": 0, "deed": { "do": "rally" }, "src": "voice" },
+    { "tick": 1000, "team": 0, "deed": { "do": "attack", "who": { "t": "army" }, "target": 6 }, "src": "voice" },
+    { "tick": 1200, "team": 0, "deed": { "do": "take", "who": { "t": "squad", "id": 3 }, "site": 1 }, "src": "tap" },
+    { "tick": 1300, "team": 0, "deed": { "do": "move", "who": { "t": "squad", "id": 9 }, "to": { "x": 1.0, "y": 1.0 } }, "src": "typed" },
+    { "tick": 1400, "team": 1, "deed": { "do": "take", "who": { "t": "army" }, "site": 2 }, "src": "brain" }
+  ]
+}

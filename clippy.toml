@@ -1,0 +1,20 @@
+# Determinism guards (docs/engine/ENGINE.md, "Determinism rules"): transcendentals go through sim::math (libm),
+# and nothing iterates a hash map.
+disallowed-methods = [
+  { path = "f64::sin", reason = "use sim::math::sin (libm), bit-identical in WASM" },
+  { path = "f64::cos", reason = "use sim::math::cos (libm), bit-identical in WASM" },
+  { path = "f64::tan", reason = "use libm" },
+  { path = "f64::atan2", reason = "use sim::math::atan2 (libm), bit-identical in WASM" },
+  { path = "f64::exp", reason = "use libm" },
+  { path = "f64::ln", reason = "use libm" },
+  { path = "f64::powf", reason = "use libm" },
+  { path = "f64::powi", reason = "not guaranteed bit-identical; multiply" },
+  { path = "f64::hypot", reason = "use sim::math::hyp" },
+  { path = "f32::sin", reason = "use libm" },
+  { path = "f32::cos", reason = "use libm" },
+  { path = "f32::powi", reason = "not guaranteed bit-identical; multiply" },
+]
+disallowed-types = [
+  { path = "std::collections::HashMap", reason = "iteration order: use Vec by id or BTreeMap" },
+  { path = "std::collections::HashSet", reason = "iteration order: use Vec by id or BTreeSet" },
+]

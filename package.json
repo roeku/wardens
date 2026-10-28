@@ -6,7 +6,9 @@
     "sim": "wasm-pack build crates/sim-wasm --target web --out-dir ../../web/src/sim-pkg --release",
     "dev": "vite web",
     "build": "npm run sim && tsc -p web && vite build web",
-    "typecheck": "tsc -p web"
+    "typecheck": "tsc -p web",
+    "test": "cargo test && npm run test:wasm",
+    "test:wasm": "wasm-pack test --node crates/sim-wasm"
   },
   "devDependencies": {
     "@types/three": "^0.180.0",
