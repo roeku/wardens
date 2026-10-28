@@ -103,3 +103,44 @@ One entry per decision, newest at the bottom. Format:
 - Shots at zoom 7, 16 and 34 (plus night and pause) are in `out/shots/c-*.png`.
 **Rejected:** one shadow camera over the whole map (stable, but 2–2.5 art pixels per shadow texel at zoom 34); a shadow camera re-fitted every frame (the flicker above).
 **Spec:** docs/spec/02-look.md §1–§3, §8.
+
+## D-07 | 2026-10-28 | Day 1 block D: the voice eval, and local Glimmer as the brain
+**Decision:**
+- **Code layout.** `tools/voice-eval` is Node/TypeScript running the game's own voice modules from `web/src/voice/` (field, prompt, normalise, fast path, resolve, brain client), so what is measured is what ships. Node 22 runs TypeScript natively, so no extra dependency.
+- **Serving.** The brain is `scripts/brain.sh`: llama-server, 2 slots, with the DFlash drafter for speculative decoding by default. Calls use the prefill mode of D-03 with a whitespace-free GBNF grammar built from the per-battle schema, on slot 0, at temperature 0. The OpenAI-compatible `chat` mode is kept for hosted endpoints.
+- **Prompt and field state.**
+  - The prompt is §4a's rules verbatim plus 8 examples on another field (KAEL, MAREK, HUGH, TAMSIN; CHAPEL, WEIR, BARROW, ASHWOOD, BROOK), worded differently from the eval set.
+  - The state text and schema builders reproduce `docs/voice-eval/fixture.json`'s text and `schema.json` exactly, checked on every run. As in the fixture, only villages say who holds them.
+- **Normalising (§5).**
+  - "right" and "go on" are fillers only at the start ("right, everyone hold"); elsewhere "right" is a side.
+  - Names match by Levenshtein ≤ 1 or a simplified sound key standing in for Double Metaphone.
+  - Common words (will, hold, march, back…) are never heard as names.
+  - Spoken names are replaced by their exact names before the brain, so "boris" reaches it as BORS.
+- **Resolving (§6).**
+  - Naming every company is an order to the army.
+  - Holding a place is moving there with fight on. Attacking a place takes it.
+  - **A move to a village the blight holds is a take.**
+  - Orders that come with `unclear: true` are still carried out.
+  - Attack and take deeds now carry `via`, so "round the left to the mill" bends the route (contracts extended on both sides; the golden hashes are unchanged).
+**Results** (fixture field, 20 cases):
+
+| Configuration | Accuracy | Brain p50 / p95 | Tokens out / new in |
+|---|---|---|---|
+| D-03 smoke: chat with reasoning | ~2/7 | 21–50 s | 250–650 thinking |
+| D-03 smoke: prefill, no examples | ~5–7/11 | 2–8 s | 55–100 |
+| prefill + examples, no drafter (1 run) | 17/20 | 4.7 / 7.0 s | 32 / 24 |
+| **+ resolve fixes + DFlash drafter, state warm, 3 runs** | **20/20, every case every run** | **2.76 / 3.70 s** | 32 / 5 |
+| same, state cold (1 run) | 20/20 | 4.25 / 6.76 s | 32 / 515 |
+
+- **Load caveat.** During these runs the Mac was busy with other work: four `basisu` processes at about 500% CPU, Blender, a Playwright Chrome, and 6.5 GB of swap. Decode ran at 6.3–7.4 tok/s without the drafter and 12.5–13.4 with it, against 14–15 without the drafter in the morning's smoke test. The drafter is a 1.8× speed-up under the same load. Re-measure on an idle machine (estimate: about 1.3–1.6 s p50).
+- **Fast-path cases** (rally, hold, recall ×2) take under 10 ms end to end.
+**Local or hosted:**
+- **Local Glimmer stays the brain** for development and for the offline, private story: the accuracy target is met with margin.
+- It misses the 1.2 s Mac latency target (2.8 s p50 loaded). With time at ×0.3 while speaking, 2.8 s is about 0.85 s of game time, which plays.
+- The judges' public build serves the same weights on a hosted GPU (day 7). Run llama-server there, so the prefill mode and grammar work. That needs the Modal or Baseten credits, which wait on the Meta team ID.
+- In the game, the field state must be sent to the brain when the hold starts (`warm`), not on release. Cold costs about +1.5 s.
+**Not yet measured:**
+- The `--audio` path: the 20+20 clips aren't recorded yet. Only `small.en` is on this machine; the checklist's `large-v3-turbo` path doesn't exist here.
+- Chat mode end to end: its reasoning makes it 21–50 s per order locally (D-03).
+**Rejected:** relying on the template's reasoning controls (D-03); the full Double Metaphone (several hundred lines for one test case that Levenshtein already covers).
+**Spec:** docs/spec/06-voice.md §2, §4–§6, §9; docs/voice-eval/*.

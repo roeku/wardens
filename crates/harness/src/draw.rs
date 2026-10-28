@@ -50,8 +50,8 @@ pub fn top_down(b: &Battle) -> RgbImage {
         let to = match &s.order {
             Order::Hold { .. } => None,
             Order::Move { to, .. } => Some((*to, CREAM)),
-            Order::Attack { target } => b.squads.get(*target as usize).map(|t| (P::new(t.x, t.y), ATTACK)),
-            Order::Take { site } => m.sites.get(*site as usize).map(|t| (t.at, GOLD)),
+            Order::Attack { target, .. } => b.squads.get(*target as usize).map(|t| (P::new(t.x, t.y), ATTACK)),
+            Order::Take { site, .. } => m.sites.get(*site as usize).map(|t| (t.at, GOLD)),
         };
         if let Some((to, colour)) = to {
             line(&mut img, from, to, colour);

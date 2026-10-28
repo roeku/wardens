@@ -6,9 +6,10 @@
     "sim": "wasm-pack build crates/sim-wasm --target web --out-dir ../../web/src/sim-pkg --release",
     "dev": "vite web",
     "build": "npm run sim && npm run typecheck && vite build web",
-    "typecheck": "tsc -p web && tsc -p web/tsconfig.node.json",
+    "typecheck": "tsc -p web && tsc -p web/tsconfig.node.json && tsc -p tools",
     "test": "cargo test && npm run test:wasm",
-    "test:wasm": "wasm-pack test --node crates/sim-wasm"
+    "test:wasm": "wasm-pack test --node crates/sim-wasm",
+    "voice-eval": "node --disable-warning=ExperimentalWarning tools/voice-eval/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

@@ -12,8 +12,8 @@ export type Who = { t: 'army' } | { t: 'squad'; id: number };
 
 export type Deed =
   | { do: 'move'; who: Who; to: P; via?: P[]; fight?: boolean; face?: number }
-  | { do: 'attack'; who: Who; target: number }
-  | { do: 'take'; who: Who; site: number }
+  | { do: 'attack'; who: Who; target: number; via?: P[] }
+  | { do: 'take'; who: Who; site: number; via?: P[] }
   | { do: 'front'; line: P[] }
   | { do: 'hold'; who: Who }
   | { do: 'recall'; id: number }

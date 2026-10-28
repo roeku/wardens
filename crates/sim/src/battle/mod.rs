@@ -34,8 +34,25 @@ pub enum SquadState {
 pub enum Order {
     Hold { face: Option<f64> },
     Move { to: P, via: Vec<P>, fight: bool, face: Option<f64> },
-    Attack { target: SquadId },
-    Take { site: u16 },
+    Attack { target: SquadId, via: Vec<P> },
+    Take { site: u16, via: Vec<P> },
+}
+
+impl Order {
+    /// Waypoints still to pass, dropped one by one within 0.9 tiles (04-battle.md §3b).
+    pub fn via(&self) -> &[P] {
+        match self {
+            Order::Move { via, .. } | Order::Attack { via, .. } | Order::Take { via, .. } => via,
+            Order::Hold { .. } => &[],
+        }
+    }
+
+    fn via_mut(&mut self) -> Option<&mut Vec<P>> {
+        match self {
+            Order::Move { via, .. } | Order::Attack { via, .. } | Order::Take { via, .. } => Some(via),
+            Order::Hold { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -203,12 +220,13 @@ impl Battle {
         let mv = &self.tune.movement;
         match &s.order {
             Order::Hold { .. } => None,
-            Order::Move { to, via, face, .. } => Some((via.first().copied().unwrap_or(*to), mv.arrive_at, *face)),
-            Order::Attack { target } => {
+            _ if !s.order.via().is_empty() => Some((s.order.via()[0], mv.arrive_at, None)),
+            Order::Move { to, face, .. } => Some((*to, mv.arrive_at, *face)),
+            Order::Attack { target, .. } => {
                 let t = &self.squads[*target as usize];
                 Some((P::new(t.x, t.y), self.tune.combat.melee, None))
             }
-            Order::Take { site } => Some((self.map.sites[*site as usize].at, mv.arrive_at, None)),
+            Order::Take { site, .. } => Some((self.map.sites[*site as usize].at, mv.arrive_at, None)),
         }
     }
 
@@ -231,13 +249,13 @@ impl Battle {
             return;
         };
         // Drop a via point once within 0.9.
-        if let Order::Move { via, .. } = &mut self.squads[i].order
+        if let Some(via) = self.squads[i].order.via_mut()
             && via.first().is_some_and(|v| v.dist(here) < mv.via_drop)
         {
             via.remove(0);
             return;
         }
-        let final_leg = !matches!(&self.squads[i].order, Order::Move { via, .. } if !via.is_empty());
+        let final_leg = self.squads[i].order.via().is_empty();
         if final_leg && here.dist(goal) <= arrive {
             let s = &mut self.squads[i];
             if let Order::Move { .. } | Order::Take { .. } = s.order {
@@ -397,13 +415,21 @@ impl Battle {
                     f.u32(*fight as u32);
                     f.f64(face.unwrap_or(f64::MAX));
                 }
-                Order::Attack { target } => {
+                Order::Attack { target, via } => {
                     f.u32(2);
                     f.u32(*target as u32);
+                    for p in via {
+                        f.f64(p.x);
+                        f.f64(p.y);
+                    }
                 }
-                Order::Take { site } => {
+                Order::Take { site, via } => {
                     f.u32(3);
                     f.u32(*site as u32);
+                    for p in via {
+                        f.f64(p.x);
+                        f.f64(p.y);
+                    }
                 }
             }
         }
@@ -459,8 +485,8 @@ impl Battle {
         let order = match &s.order {
             Order::Hold { .. } => "hold".to_string(),
             Order::Move { to, fight, .. } => format!("move ({:.1},{:.1}){}", to.x, to.y, if *fight { " fight" } else { "" }),
-            Order::Attack { target } => format!("attack {target}"),
-            Order::Take { site } => format!("take site {site}"),
+            Order::Attack { target, .. } => format!("attack {target}"),
+            Order::Take { site, .. } => format!("take site {site}"),
         };
         let detached = if s.detached { " detached" } else { "" };
         format!(

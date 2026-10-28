@@ -13,4 +13,4 @@ Read and follow `AGENTS.md`. It holds the rules for this repository.
 | `cargo run -p harness -- sweep …` | balance sweeps |
 | `npm run voice-eval` | the 20-command voice test against the brain at `$BRAIN_URL` (default `http://127.0.0.1:8080`) |
 
-**Local brain:** `llama-server` with Muse Glimmer, started by `scripts/brain.sh` (record the exact command in `DECISIONS.md` on day 1).
+**Local brain:** `llama-server` with Muse Glimmer and its DFlash drafter, started by `scripts/brain.sh` (the exact flags are in the script; the why is in `DECISIONS.md` D-03 and D-07). `npm run voice-eval -- --runs 3` checks it; logs go to `out/voice-eval/`.

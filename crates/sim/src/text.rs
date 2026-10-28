@@ -22,8 +22,8 @@ pub fn parse(b: &Battle, team: Team, text: &str) -> Result<Deed, String> {
     let deed = match verb.to_ascii_lowercase().as_str() {
         "march" => Deed::Move { who: Who::Army, to: point(arg(0)?, arg(1)?)?, via: Vec::new(), fight: fight(2), face: None },
         "send" => Deed::Move { who: who(b, team, arg(0)?)?, to: point(arg(1)?, arg(2)?)?, via: Vec::new(), fight: fight(3), face: None },
-        "attack" => Deed::Attack { who: who(b, team, arg(0)?)?, target: id(arg(1)?.trim_start_matches(['E', 'e']))? },
-        "take" => Deed::Take { who: who(b, team, arg(0)?)?, site: id(arg(1)?)? },
+        "attack" => Deed::Attack { who: who(b, team, arg(0)?)?, target: id(arg(1)?.trim_start_matches(['E', 'e']))?, via: Vec::new() },
+        "take" => Deed::Take { who: who(b, team, arg(0)?)?, site: id(arg(1)?)?, via: Vec::new() },
         "front" => {
             if args.len() < 4 || args.len() % 2 == 1 {
                 return Err("front: give two or more x y pairs".into());
@@ -50,8 +50,8 @@ pub fn format(deed: &Deed) -> String {
     match deed {
         Deed::Move { who: Who::Army, to, fight: f, .. } => format!("march {} {}{}", to.x, to.y, fight(*f)),
         Deed::Move { who: w, to, fight: f, .. } => format!("send {} {} {}{}", who(w), to.x, to.y, fight(*f)),
-        Deed::Attack { who: w, target } => format!("attack {} E{target}", who(w)),
-        Deed::Take { who: w, site } => format!("take {} {site}", who(w)),
+        Deed::Attack { who: w, target, .. } => format!("attack {} E{target}", who(w)),
+        Deed::Take { who: w, site, .. } => format!("take {} {site}", who(w)),
         Deed::Front { line } => {
             let pts: Vec<String> = line.iter().map(|p| format!("{} {}", p.x, p.y)).collect();
             format!("front {}", pts.join(" "))

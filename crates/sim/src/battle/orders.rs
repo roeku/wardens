@@ -28,25 +28,25 @@ impl Battle {
                     Whom::One(i) => self.detach(i, Order::Move { to: *to, via: via.clone(), fight: *fight, face: *face }),
                 }
             }
-            Deed::Attack { who, target } => {
+            Deed::Attack { who, target, via } => {
                 let whom = self.whom(team, who)?;
                 let t = self.foe(team, *target)?;
                 match whom {
-                    Whom::Army(_) => self.with_army(team, |_| Order::Attack { target: t }),
-                    Whom::One(i) => self.detach(i, Order::Attack { target: t }),
+                    Whom::Army(_) => self.with_army(team, |_| Order::Attack { target: t, via: via.clone() }),
+                    Whom::One(i) => self.detach(i, Order::Attack { target: t, via: via.clone() }),
                 }
             }
-            Deed::Take { who, site } => {
+            Deed::Take { who, site, via } => {
                 let whom = self.whom(team, who)?;
                 let Some(at) = self.map.sites.get(*site as usize).map(|s| s.at) else {
                     return Err((self.captain_at(team), format!("no site {site}")));
                 };
                 match whom {
                     Whom::Army(cap) => {
-                        self.army_to(team, cap, at, Vec::new(), true, None);
-                        self.squads[cap].order = Order::Take { site: *site };
+                        self.army_to(team, cap, at, via.clone(), true, None);
+                        self.squads[cap].order = Order::Take { site: *site, via: via.clone() };
                     }
-                    Whom::One(i) => self.detach(i, Order::Take { site: *site }),
+                    Whom::One(i) => self.detach(i, Order::Take { site: *site, via: via.clone() }),
                 }
             }
             Deed::Front { line } => {

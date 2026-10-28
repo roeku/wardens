@@ -34,8 +34,8 @@ pub enum Who { Army, Squad { id: SquadId } }
 #[serde(tag = "do", rename_all = "lowercase")]
 pub enum Deed {
     Move { who: Who, to: P, #[serde(default)] via: Vec<P>, #[serde(default)] fight: bool, face: Option<f64> },
-    Attack { who: Who, target: SquadId },
-    Take { who: Who, site: SiteId },
+    Attack { who: Who, target: SquadId, #[serde(default)] via: Vec<P> },
+    Take { who: Who, site: SiteId, #[serde(default)] via: Vec<P> },
     /// A drawn front: the polyline as drawn (simplified at 0.12 tiles). The sim runs planFront.
     Front { line: Vec<P> },
     Hold { who: Who },
