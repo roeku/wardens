@@ -145,6 +145,23 @@ One entry per decision, newest at the bottom. Format:
 **Rejected:** relying on the template's reasoning controls (D-03); the full Double Metaphone (several hundred lines for one test case that Levenshtein already covers).
 **Spec:** docs/spec/06-voice.md §2, §4–§6, §9; docs/voice-eval/*.
 
+## D-10 | 2026-10-28 | The order language, and how much of the reference games to bring in
+**Decision (owner):** commanding by natural voice is the core of the game, so the sim must carry out a wide range of orders, and voice must understand them. That covers both:
+- **command structures:** sequences, signals, conditions, standing orders, named groups;
+- **built structures:** field works the companies build and man by order.
+
+The reference games (We March as One, Dawn of Defense, Kingmakers) come in *inside* VANGUARD's core (no store, losses stick, grow through your people):
+- deployment before contact, with reserves
+- hold-the-line waves, and capture squads that go for places
+- officers as morale nodes, with capture
+- field works
+- visible counters and enemy rosters
+
+The design is `docs/spec/08-orders.md`.
+**Why:** the owner's direction; all three teardowns were read in full on 28 Oct. Their players' biggest gaps are the very ones voice fills: no orders after deployment, hidden targeting, orders limited to attack/hold/waypoint.
+**Rejected:** an economy layer with resources and paid buildings (it breaks "no store"); keeping only the spec's 7 verbs.
+**Spec:** docs/spec/08-orders.md (new); 04-battle.md; 06-voice.md; 07-progression.md.
+
 ## D-08 | 2026-10-28 | Day 2 part A: the land (03-land §4–§6, §10; 02-look §3–§4)
 **Summary:**
 - `sim::land::make(&BattleMap)` paints the MEADOW ground at 12 texels per tile over the map plus 18 tiles of country, extends the heights and places the scatter. The view draws the painted mesh, water, instanced scatter and the fog patch.

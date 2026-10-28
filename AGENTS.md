@@ -11,6 +11,7 @@
   - `05-sound.md`: audio
   - `06-voice.md`: voice command
   - `07-progression.md`: progression
+  - `08-orders.md`: the order language (what can be ordered, by voice and marks)
 - `docs/engine/ENGINE.md` is the architecture. `docs/engine/contracts/` holds the shared types.
 - **Never invent a constant the spec gives.** When the spec is silent, choose, and add an entry to `DECISIONS.md`: the date, the decision, the reason, and the alternatives rejected.
 - When the spec and the code disagree, fix the code, or record the change in `DECISIONS.md` and update the spec.
