@@ -1,0 +1,12 @@
+# rename to .gitignore in the repo
+/target
+node_modules
+/web/dist
+/web/src/sim-pkg
+/out
+/models
+*.gguf
+*.safetensors
+.env
+.env.*
+.DS_Store

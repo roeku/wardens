@@ -1,0 +1,31 @@
+{
+  "about": "06-voice.md §9. 'path' is fast or brain. 'expect' lists orders; a case passes when every expected order matches who (as a set, after resolving kinds/OTHERS), do and target. 'check' adds conditions on resolved points.",
+  "runsPerCase": 3,
+  "targets": { "accuracy": 18, "brainP50MsMac": 1200, "brainP50MsGpu": 600, "endToEndP50MsMac": 1800, "endToEndP50MsGpu": 1200 },
+  "cases": [
+    { "n": 1,  "said": "Rally!", "path": "fast", "expect": [{ "who": ["ARMY"], "do": "rally" }] },
+    { "n": 2,  "said": "Hold.", "path": "fast", "expect": [{ "who": ["ARMY"], "do": "hold" }] },
+    { "n": 3,  "said": "Wil, come back", "path": "fast", "expect": [{ "who": ["WIL"], "do": "recall" }] },
+    { "n": 4,  "said": "Bors, take the riders round the left to the mill", "path": "brain",
+      "expect": [{ "who": ["BORS"], "do": "take", "target": "MILL", "side": "left" }], "check": "via point y < 10" },
+    { "n": 5,  "said": "Bors round the left to the mill, everyone else hold the ridge", "path": "brain",
+      "expect": [{ "who": ["BORS"], "do": "take", "target": "MILL", "side": "left" },
+                 { "who": ["WIL","ODA","REN"], "do": "move", "target": "RIDGE", "fight": true }] },
+    { "n": 6,  "said": "Archers onto the ridge", "path": "brain", "expect": [{ "who": ["REN"], "do": "move", "target": "RIDGE" }] },
+    { "n": 7,  "said": "Form a line along the river", "path": "brain",
+      "expect": [{ "who": ["ARMY"], "do": "front", "target": "RIVER" }], "check": "resolved line within 4 tiles of x = 20" },
+    { "n": 8,  "said": "Shields, block the ford", "path": "brain", "expect": [{ "who": ["ODA"], "do": "move", "target": "FORD", "fight": true }] },
+    { "n": 9,  "said": "Attack the drakes", "path": "brain", "expect": [{ "who": ["ARMY"], "do": "attack", "target": "E2" }] },
+    { "n": 10, "said": "Spears on the trolls", "path": "brain", "expect": [{ "who": ["WIL"], "do": "attack", "target": "E3" }] },
+    { "n": 11, "said": "Ren, shoot the blight-men", "path": "brain", "expect": [{ "who": ["REN"], "do": "attack", "target": "E1" }] },
+    { "n": 12, "said": "Free the mill", "path": "brain", "expect": [{ "who": ["ARMY"], "do": "take", "target": "MILL" }] },
+    { "n": 13, "said": "Bors, hit their flank", "path": "brain", "expect": [{ "who": ["BORS"], "do": "attack", "target": "E1", "sideIn": ["left","right"] }] },
+    { "n": 14, "said": "Fall back to the woods", "path": "brain", "expect": [{ "who": ["ARMY"], "do": "move", "target": "OAKWOOD", "fight": false }] },
+    { "n": 15, "said": "Boris, to the mill", "path": "brain", "expect": [{ "who": ["BORS"], "doIn": ["move","take"], "target": "MILL" }] },
+    { "n": 16, "said": "Send the horse to scout the nest", "path": "brain", "expect": [{ "who": ["BORS"], "do": "move", "target": "NEST", "fight": false }] },
+    { "n": 17, "said": "Everybody to the ford", "path": "brain", "expect": [{ "who": ["ARMY"], "do": "move", "target": "FORD" }] },
+    { "n": 18, "said": "Bors, back to me", "path": "fast", "expect": [{ "who": ["BORS"], "do": "recall" }] },
+    { "n": 19, "said": "Uh, the, wait", "path": "brain", "expect": [], "unclear": true },
+    { "n": 20, "said": "Kill the dragon", "path": "brain", "expect": [{ "who": ["ARMY"], "do": "attack", "target": "E2" }] }
+  ]
+}

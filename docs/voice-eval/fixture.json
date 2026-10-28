@@ -1,0 +1,29 @@
+{
+  "about": "The fixed battlefield for voice-eval (06-voice.md §4b). Tiles, x east, y south. Army faces east, so its left is north.",
+  "facing": "east",
+  "armyLeft": "north",
+  "threatPoint": { "x": 22, "y": 12 },
+  "ours": [
+    { "id": 1, "name": "BORS", "kind": "horse",  "men": 6,  "full": 6,  "x": 10, "y": 10, "state": "idle" },
+    { "id": 2, "name": "WIL",  "kind": "spear",  "men": 12, "full": 12, "x": 13, "y": 13, "state": "idle" },
+    { "id": 3, "name": "ODA",  "kind": "shield", "men": 10, "full": 10, "x": 13, "y": 16, "state": "idle" },
+    { "id": 4, "name": "REN",  "kind": "archer", "men": 10, "full": 10, "x": 10, "y": 14, "state": "idle" }
+  ],
+  "captain": { "x": 9, "y": 13, "hp": 1.0 },
+  "foesSeen": [
+    { "id": "E1", "kind": "blight-men", "men": 12, "x": 20, "y": 14, "state": "marching west" },
+    { "id": "E2", "kind": "drakes",     "men": 3,  "x": 24, "y": 6,  "state": "idle" },
+    { "id": "E3", "kind": "trolls",     "men": 3,  "x": 26, "y": 18, "state": "idle" }
+  ],
+  "places": [
+    { "name": "MILL", "type": "village", "x": 21, "y": 6,  "holder": "foe", "burning": "1/5" },
+    { "name": "FORD", "type": "road",    "x": 23, "y": 14, "holder": "none" },
+    { "name": "NEST", "type": "keep",    "x": 40, "y": 13, "holder": "foe" }
+  ],
+  "ground": [
+    { "name": "RIDGE",   "type": "hill",  "x": 16, "y": 19, "r": 4 },
+    { "name": "OAKWOOD", "type": "wood",  "x0": 8, "y0": 3, "x1": 12, "y1": 6 },
+    { "name": "RIVER",   "type": "river", "x0": 22, "x1": 23, "fords": [6, 14] }
+  ],
+  "stateText": "FACING east. Army left = north.\nOURS: BORS horse 6/6 (10,10) idle | WIL spear 12/12 (13,13) idle | ODA shield 10/10 (13,16) idle |\n      REN archer 10/10 (10,14) idle | CAPTAIN (9,13) hp 100%\nFOES SEEN: E1 blight-men 12 (20,14) marching west | E2 drakes 3 (24,6) idle | E3 trolls 3 (26,18) idle\nPLACES: MILL village (21,6) foe-held burning 1/5 | FORD road (23,14) | NEST keep (40,13)\nGROUND: RIDGE hill (16,19) r4 | OAKWOOD wood (8-12,3-6) | RIVER x 22-23, fords at y 6 and 14"
+}
