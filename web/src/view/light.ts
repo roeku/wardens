@@ -60,6 +60,12 @@ const RECENTRE_SHARE = 0.75;
 const SUN_BACK = 100;
 /** Covers the map and 18 tiles of country past it at the lowest evening sun. */
 const SHADOW_FAR = 220;
+// scratch vectors: `update` runs every frame and allocates nothing (01-flow.md §8 "Zero garbage")
+const V_BACK = new THREE.Vector3();
+const V_X = new THREE.Vector3();
+const V_Y = new THREE.Vector3();
+const V_DRIFT = new THREE.Vector3();
+const V_TARGET = new THREE.Vector3();
 
 /**
  * The sun and the sky. The shadow camera is a square round the focus; it is snapped to its own texel grid so
@@ -72,6 +78,7 @@ export class Sun {
   private readonly dir = new THREE.Vector3();
   private half = 0;
   private t = -1;
+  private litT = NaN;
 
   constructor(scene: THREE.Scene, private readonly mapSize: number) {
     this.light.castShadow = true;
@@ -83,33 +90,36 @@ export class Sun {
 
   /** Sets the light for time `t` and fits the shadow camera round `focus` for an `aw × ah` view at zoom `s`. */
   update(t: number, focus: THREE.Vector3, aw: number, ah: number, s: number): void {
-    const L = daylight(t);
-    this.light.color.copy(L.sun);
-    this.light.intensity = L.sunI;
-    this.hemi.color.copy(L.sky);
-    this.hemi.groundColor.copy(L.ground);
-    this.hemi.intensity = L.hemiI;
-    this.haze.copy(L.haze);
-
-    const el = THREE.MathUtils.degToRad(L.elev);
-    const az = -0.35 - 0.25 * t;
-    this.dir.set(-Math.sin(az) * Math.cos(el), -Math.sin(el), Math.cos(az) * Math.cos(el));
+    if (t !== this.litT) {
+      // the light depends on t alone: worked out when t changes, not every frame
+      this.litT = t;
+      const L = daylight(t);
+      this.light.color.copy(L.sun);
+      this.light.intensity = L.sunI;
+      this.hemi.color.copy(L.sky);
+      this.hemi.groundColor.copy(L.ground);
+      this.hemi.intensity = L.hemiI;
+      this.haze.copy(L.haze);
+      const el = THREE.MathUtils.degToRad(L.elev);
+      const az = -0.35 - 0.25 * t;
+      this.dir.set(-Math.sin(az) * Math.cos(el), -Math.sin(el), Math.cos(az) * Math.cos(el));
+    }
 
     const half = Math.hypot((aw + 2) / s, (ah + 2) / (s * Math.sin(PITCH))) / 2 + SHADOW_MARGIN;
-    const back = this.dir.clone().negate();
-    const xAxis = new THREE.Vector3(0, 1, 0).cross(back).normalize();
-    const yAxis = back.clone().cross(xAxis);
+    const back = V_BACK.copy(this.dir).negate();
+    const xAxis = V_X.set(0, 1, 0).cross(back).normalize();
+    const yAxis = V_Y.copy(back).cross(xAxis);
     // The square stays put until the focus has used most of its margin, then re-centres snapped to whole shadow
     // texels and on a fixed plane along the light. Between re-centres the shadow map does not change at all,
     // so a slow pan shows no shadow flicker (DECISIONS.md D-06).
-    const drift = focus.clone().sub(this.light.target.position);
+    const drift = V_DRIFT.copy(focus).sub(this.light.target.position);
     const stale = half !== this.half || t !== this.t || Math.hypot(drift.dot(xAxis), drift.dot(yAxis)) > SHADOW_MARGIN * RECENTRE_SHARE;
     if (!stale) return;
     this.half = half;
     this.t = t;
     const texel = (2 * half) / this.mapSize;
     const snap = (v: number) => Math.round(v / texel) * texel - v;
-    const target = focus.clone().addScaledVector(xAxis, snap(focus.dot(xAxis))).addScaledVector(yAxis, snap(focus.dot(yAxis)));
+    const target = V_TARGET.copy(focus).addScaledVector(xAxis, snap(focus.dot(xAxis))).addScaledVector(yAxis, snap(focus.dot(yAxis)));
     target.addScaledVector(this.dir, -target.dot(this.dir));
     this.light.target.position.copy(target);
     this.light.position.copy(target).addScaledVector(this.dir, -SUN_BACK);

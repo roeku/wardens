@@ -38,6 +38,8 @@ export class View {
   nightK = 0;
   grey = 0;
   danger = 0;
+  /** Called after the camera and the sun are set for a frame, just before drawing (the figures pose here). */
+  beforeDraw: (() => void) | null = null;
   private readonly lights = new Float32Array(MAX_LIGHTS * 4);
 
   constructor(parent: HTMLElement, readonly land: LandData, opts: ViewOpts) {
@@ -64,6 +66,7 @@ export class View {
     this.camera.cam.quaternion.copy(CAMERA_TURN);
     this.camera.cam.updateMatrixWorld(true);
     this.sun.update(this.dayT, this.camera.snapped, aw, ah, this.camera.s);
+    this.beforeDraw?.();
     FOG.uOrigin.value.copy(this.camera.origin);
     FOG.uPix.value.set(this.camera.s, (aw + 2) / 2, (ah + 2) / 2);
     FOG.uHaze.value.copy(this.sun.haze);

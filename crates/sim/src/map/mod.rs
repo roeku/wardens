@@ -2,6 +2,7 @@
 //! consts rather than tuning: changing one changes every seed's map (DECISIONS.md D-05).
 
 mod assault;
+mod field;
 mod ford;
 pub mod path;
 mod relief;
@@ -59,13 +60,15 @@ pub struct Site {
     pub owner: Option<Team>,
 }
 
-/// Which battle the map is for: an assault on a keep or a town (village under the torch), or a ford rescue.
+/// Which battle the map is for: an assault on a keep or a town (village under the torch), a ford rescue, or an
+/// open-field skirmish with mirrored halves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MapKind {
     Keep,
     Town,
     Ford,
+    Field,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -128,6 +131,7 @@ pub fn generate(seed: u32, opts: MapOpts) -> BattleMap {
         let m = match opts.kind {
             MapKind::Keep | MapKind::Town => assault::make(s, width, opts.kind),
             MapKind::Ford => ford::make(s, width),
+            MapKind::Field => field::make(s, width),
         };
         if m.valid() {
             return m;
@@ -277,7 +281,8 @@ impl BattleMap {
         });
         let reachable = self.sites.iter().all(|s| path::astar(self, self.deploy[0], s.at).is_some());
         let roads = self.kind != MapKind::Ford || self.roads.len() == 2;
-        rings_apart && reachable && roads
+        let across = self.kind != MapKind::Field || path::astar(self, self.deploy[0], self.deploy[1]).is_some();
+        rings_apart && reachable && roads && across
     }
 
     pub fn heights_w(&self) -> usize {
@@ -329,7 +334,7 @@ mod tests {
     #[test]
     fn maps_are_valid_and_sized() {
         let mut counts = Vec::new();
-        for kind in [MapKind::Keep, MapKind::Town, MapKind::Ford] {
+        for kind in [MapKind::Keep, MapKind::Town, MapKind::Ford, MapKind::Field] {
             for width in WIDTHS {
                 let mut sites = 0;
                 for seed in 1..=20 {

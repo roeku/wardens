@@ -110,6 +110,55 @@ pub fn line_walkable(m: &BattleMap, a: P, b: P) -> bool {
     })
 }
 
+/// Step of the strict line test, tiles.
+const CLEAR_STEP: f64 = 0.25;
+
+/// True if a man can walk the straight line from `a` to `b` with no corner cutting: every tile sampled every
+/// 0.25 is passable, and where the line steps diagonally from one tile to the next, both tiles beside the
+/// corner are passable too (as A* requires). Men move one axis at a time, so a line through a corner between
+/// two rocks would wedge them.
+pub fn line_clear(m: &BattleMap, a: P, b: P) -> bool {
+    let d = a.dist(b);
+    let steps = (d / CLEAR_STEP).ceil().max(1.0) as u32;
+    let tile = |t: f64| P::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+    let (mut px, mut py) = (a.x.floor() as i32, a.y.floor() as i32);
+    for i in 0..=steps {
+        let p = tile(i as f64 / steps as f64);
+        let (x, y) = (p.x.floor() as i32, p.y.floor() as i32);
+        if !m.tile(x, y).passable() {
+            return false;
+        }
+        if x != px && y != py && !(m.tile(x, py).passable() && m.tile(px, y).passable()) {
+            return false;
+        }
+        (px, py) = (x, y);
+    }
+    true
+}
+
+/// A* then string-pulling with the strict line test: a man's personal route.
+pub fn route_clear(m: &BattleMap, from: P, to: P) -> Option<Vec<P>> {
+    let tiles = astar(m, from, to)?;
+    let mut out = Vec::new();
+    let mut at = from;
+    let mut i = 0;
+    while i < tiles.len() {
+        let mut j = tiles.len() - 1;
+        while j > i && !line_clear(m, at, tiles[j]) {
+            j -= 1;
+        }
+        out.push(tiles[j]);
+        at = tiles[j];
+        i = j + 1;
+    }
+    if let Some(last) = out.last_mut()
+        && line_clear(m, *last, to)
+    {
+        *last = to;
+    }
+    Some(out)
+}
+
 /// String-pulls a path: from each kept point, skip to the farthest point still in a walkable line.
 pub fn pull(m: &BattleMap, from: P, path: &[P]) -> Vec<P> {
     let mut out = Vec::new();

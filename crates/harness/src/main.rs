@@ -3,15 +3,18 @@
 //! without a browser.
 
 mod draw;
+mod sweep;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use sim::battle::Replay;
+use sim::battle::{BotSlot, Replay};
+use sim::bots::BotKind;
 use sim::contracts::{Command, Source, TICK_HZ};
 use sim::map::{MapKind, MapOpts};
+use sim::tune::Tune;
 
 const SESSIONS: &str = "out/sessions";
 const LOOKS: &str = "out/look";
@@ -37,6 +40,30 @@ enum Cmd {
         #[arg(long, default_value_t = 300)]
         every: u32,
     },
+    /// Bot against bot over many seeds: outcomes, experience numbers and the jitter metrics, e.g.
+    /// `sweep --map field --us charge --them general1 --seeds 40`. PROTO_TUNE, if set, overrides the tuning.
+    Sweep {
+        /// keep, town, ford or field.
+        #[arg(long, default_value = "field")]
+        map: String,
+        /// 48, 64 or 80.
+        #[arg(long, default_value_t = 48)]
+        width: u16,
+        /// Team 0's bot: commander, charge or idle (or any bot).
+        #[arg(long, default_value = "commander")]
+        us: String,
+        /// Team 1's bot: general0..2 or garrison (default: general1 on the field, garrison otherwise).
+        #[arg(long)]
+        them: Option<String>,
+        #[arg(long, default_value_t = 30)]
+        seeds: u32,
+        /// The first seed.
+        #[arg(long, default_value_t = 1)]
+        from: u32,
+        /// One row per seed.
+        #[arg(long)]
+        verbose: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -44,12 +71,18 @@ enum Act {
     /// Start a session. PROTO_TUNE, if set, is kept with it as a tuning override.
     New {
         seed: u32,
-        /// keep, town or ford.
+        /// keep, town, ford or field.
         #[arg(long, default_value = "keep")]
         map: String,
         /// 48, 64 or 80.
         #[arg(long, default_value_t = 48)]
         width: u16,
+        /// A bot playing team 0 alongside your orders (re-run with the replay, never logged).
+        #[arg(long)]
+        us: Option<String>,
+        /// A bot playing team 1, e.g. garrison or general1.
+        #[arg(long)]
+        them: Option<String>,
     },
     /// Give an order now, e.g. `do march 20 13.5`, `do send BORS 18 6`, `do attack army E6`.
     Do {
@@ -84,19 +117,44 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Cmd::Play { session, act } => play(&session, act),
+        Cmd::Sweep { map, width, us, them, seeds, from, verbose } => {
+            let kind = map_kind(&map)?;
+            let them = them.unwrap_or_else(|| if kind == MapKind::Field { "general1".into() } else { "garrison".into() });
+            let tune = match std::env::var("PROTO_TUNE") {
+                Ok(over) => Tune::with_override(&serde_json::from_str(&over).map_err(|e| format!("PROTO_TUNE: {e}"))?)?,
+                Err(_) => Tune::default(),
+            };
+            let opts = sweep::Opts { kind, width, us: BotKind::parse(&us)?, them: BotKind::parse(&them)?, seeds, from, verbose, tune };
+            let started = std::time::Instant::now();
+            let runs = sweep::sweep(&opts);
+            sweep::report(&opts, &runs);
+            println!("ran in {:.1} s", started.elapsed().as_secs_f64());
+            Ok(())
+        }
     }
+}
+
+fn map_kind(map: &str) -> Result<MapKind, String> {
+    Ok(match map {
+        "keep" => MapKind::Keep,
+        "town" => MapKind::Town,
+        "ford" => MapKind::Ford,
+        "field" => MapKind::Field,
+        other => return Err(format!("unknown map {other}: keep, town, ford or field")),
+    })
 }
 
 fn play(session: &str, act: Act) -> Result<(), String> {
     let file = Path::new(SESSIONS).join(format!("{session}.json"));
-    if let Act::New { seed, map, width } = act {
-        let kind = match map.as_str() {
-            "keep" => MapKind::Keep,
-            "town" => MapKind::Town,
-            "ford" => MapKind::Ford,
-            other => return Err(format!("unknown map {other}: keep, town or ford")),
-        };
+    if let Act::New { seed, map, width, us, them } = act {
+        let kind = map_kind(&map)?;
         let mut replay = Replay::new(seed, MapOpts { kind, width });
+        for (team, bot) in [(0, us), (1, them)] {
+            if let Some(bot) = bot {
+                BotKind::parse(&bot)?;
+                replay.bots.push(BotSlot { team, bot });
+            }
+        }
         if let Ok(over) = std::env::var("PROTO_TUNE") {
             replay.tune = Some(serde_json::from_str(&over).map_err(|e| format!("PROTO_TUNE: {e}"))?);
         }

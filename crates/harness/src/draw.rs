@@ -1,9 +1,11 @@
-//! The harness's top-down picture: tiles coloured by type and shaded by height, sites as squares, every
-//! man as a dot, and each squad's order as a line from its anchor. Colours from docs/spec/02-look.md §4.
+//! The harness's top-down picture: tiles coloured by type and shaded by height (dimmed where team 0's fog has
+//! never seen, a little where it is not in sight now), sites as squares in their owner's colour, each squad's
+//! order as a line from its anchor, arrows in flight, the fallen as dark dots, and every living man as a dot:
+//! ringed red when in contact, pale when his company routs. Colours from docs/spec/02-look.md §4.
 
 use image::{Rgb, RgbImage};
-use sim::battle::{Battle, Order};
-use sim::contracts::{Kind, P};
+use sim::battle::{Battle, Order, SquadState};
+use sim::contracts::{Kind, P, Tick};
 use sim::map::{SiteKind, Tile};
 
 const PX: u32 = 12;
@@ -19,11 +21,15 @@ const CREAM: [u8; 3] = [0xf1, 0xea, 0xd6];
 const ATTACK: [u8; 3] = [0xe0, 0x53, 0x3f];
 const GOLD: [u8; 3] = [0xe8, 0xc3, 0x4a];
 const NEUTRAL: [u8; 3] = [0xd8, 0xcf, 0xb4];
+const FALLEN: [u8; 3] = [0x3a, 0x2c, 0x26];
+const FOLLOW: [u8; 3] = [0x9a, 0xb0, 0x8c];
 const TEAM: [[u8; 3]; 2] = [[0x3a, 0x8d, 0xbd], [0xc6, 0x48, 0x33]];
 const TEAM_LIGHT: [[u8; 3]; 2] = [[0x78, 0xc5, 0xe6], [0xef, 0x8e, 0x70]];
+const ROUT: [[u8; 3]; 2] = [[0xc8, 0xe4, 0xf0], [0xf6, 0xd0, 0xc4]];
 
 pub fn top_down(b: &Battle) -> RgbImage {
     let m = &b.map;
+    let fog = b.fog(0);
     let mut img = RgbImage::new(m.w as u32 * PX, m.h as u32 * PX);
     for (py, px, pixel) in img.enumerate_pixels_mut().map(|(x, y, p)| (y, x, p)) {
         let (x, y) = ((px as f64 + 0.5) / PX as f64, (py as f64 + 0.5) / PX as f64);
@@ -36,38 +42,64 @@ pub fn top_down(b: &Battle) -> RgbImage {
             Tile::Road if m.idx(tx, ty).is_some_and(|i| m.ford[i]) => FORD,
             Tile::Road => ROAD,
         };
-        let shade = (1.0 + m.height_at(x, y) * 0.18).clamp(0.6, 1.4);
+        let seen = m.idx(tx, ty).map_or(0, |i| fog[i]);
+        let dim = match seen {
+            0 => 0.55,
+            1 => 0.8,
+            _ => 1.0,
+        };
+        let shade = (1.0 + m.height_at(x, y) * 0.18).clamp(0.6, 1.4) * dim;
         *pixel = Rgb(base.map(|c| (c as f64 * shade).min(255.0) as u8));
     }
-    for s in &m.sites {
-        let colour = s.owner.map_or(NEUTRAL, |t| TEAM_LIGHT[t as usize]);
+    for (s, st) in m.sites.iter().zip(&b.sites) {
+        let colour = st.owner.map_or(NEUTRAL, |t| TEAM_LIGHT[t as usize]);
         let half = if matches!(s.kind, SiteKind::Keep | SiteKind::Town) { 9 } else { 5 };
         square(&mut img, s.at, half, INK);
         square(&mut img, s.at, half - 1, colour);
     }
-    for s in &b.squads {
+    for k in b.soldiers.iter().filter(|k| !k.alive && k.died_at != Tick::MAX) {
+        square(&mut img, P::new(k.x, k.y), 1, FALLEN);
+    }
+    for (i, s) in b.squads.iter().enumerate() {
+        if !s.on_field() {
+            continue;
+        }
         let from = P::new(s.x, s.y);
         let to = match &s.order {
-            Order::Hold { .. } => None,
-            Order::Move { to, .. } => Some((*to, CREAM)),
-            Order::Attack { target, .. } => b.squads.get(*target as usize).map(|t| (P::new(t.x, t.y), ATTACK)),
+            Order::Hold { .. } | Order::Retreat | Order::Ride => None,
+            Order::Move { to, via, .. } => Some((via.first().copied().unwrap_or(*to), CREAM)),
+            Order::Attack { target, .. } => b.squads.get(*target as usize).map(|_| (b.centre(*target as usize), ATTACK)),
             Order::Take { site, .. } => m.sites.get(*site as usize).map(|t| (t.at, GOLD)),
+            Order::Follow | Order::Recall { .. } => b.station_at(i).map(|p| (p, FOLLOW)),
+            Order::Guard { ward } => Some((b.centre(*ward as usize), FOLLOW)),
         };
         if let Some((to, colour)) = to {
             line(&mut img, from, to, colour);
         }
+        if let Some(t) = s.threat {
+            line(&mut img, b.centre(i), b.centre(t as usize), ATTACK);
+        }
     }
-    for k in &b.soldiers {
+    for a in &b.arrows {
+        let t = &b.soldiers[a.target];
+        let d = P::new(a.x, a.y).dist(P::new(t.x, t.y)).max(1e-9);
+        let tail = P::new(a.x - (t.x - a.x) / d * 0.4, a.y - (t.y - a.y) / d * 0.4);
+        line(&mut img, tail, P::new(a.x, a.y), CREAM);
+    }
+    for (idx, k) in b.soldiers.iter().enumerate() {
         if !k.alive {
             continue;
         }
         let s = &b.squads[k.squad as usize];
-        let colour = match (s.kind, k.slot) {
+        let team = s.team as usize & 1;
+        let colour = match (s.kind, s.leader) {
             (Kind::Captain, _) => GOLD,
-            (_, 0) if !s.name.is_empty() => TEAM_LIGHT[s.team as usize],
-            _ => TEAM[s.team as usize],
+            _ if s.state == SquadState::Routing => ROUT[team],
+            (_, Some(l)) if l == idx => TEAM_LIGHT[team],
+            _ => TEAM[team],
         };
-        square(&mut img, P::new(k.x, k.y), 2, INK);
+        let ring = if k.engaged { ATTACK } else { INK };
+        square(&mut img, P::new(k.x, k.y), 2, ring);
         square(&mut img, P::new(k.x, k.y), 1, colour);
     }
     img

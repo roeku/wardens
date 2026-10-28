@@ -2,6 +2,7 @@
 //! The boundary and the determinism rules are in docs/engine/ENGINE.md.
 
 pub mod battle;
+pub mod bots;
 pub mod contracts;
 pub mod hash;
 pub mod land;

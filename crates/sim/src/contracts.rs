@@ -67,16 +67,20 @@ pub struct Refusal { pub tick: Tick, pub at: P, pub why: String }
 
 // ---------------------------------------------------------------------------------------------
 // Per-frame buffers (struct of arrays in WASM memory; TS makes typed-array views over them).
-// One entry per soldier slot; `count` live entries. Re-create views if memory.buffer changes.
+// One entry per soldier slot; `count` live entries. Re-create views if memory.buffer changes, or if the
+// layout generation changes (a buffer outgrew its reserve and moved).
+// Records are interleaved per entry: soldier k's field F is f32[k * F32_FIELDS + F].
 // ---------------------------------------------------------------------------------------------
 pub mod soldier_buf {
     // f32 arrays
     pub const X: usize = 0;       // tiles
     pub const Y: usize = 1;       // tiles
-    pub const FACE: usize = 2;    // radians
-    pub const SPEED: usize = 3;   // tiles/s, actual
+    pub const FACE: usize = 2;    // radians, 04-battle §9's priority: motion (pace > 0.35), else target, else squad
+    pub const SPEED: usize = 3;   // tiles/s, actual (the low-passed pace)
     pub const HP: usize = 4;      // 0..1 of max
-    pub const F32_FIELDS: usize = 5;
+    pub const AIM_X: usize = 5;   // what he strikes or shoots at, tiles; NaN when he has no target
+    pub const AIM_Y: usize = 6;
+    pub const F32_FIELDS: usize = 7;
     // u32 array, bit-packed:
     //   bits 0..15  squad id
     //   bits 16..19 kind (Kind as u8)
@@ -87,14 +91,36 @@ pub mod soldier_buf {
     //   bit  24     is captain
     //   bit  25     recruit (still in own clothes)
     //   bits 26..27 rank of the squad (0..3)
+    //   bit  28     engaged: in contact or shooting this tick
     // second u32 array: `strikes` counter (the view starts a strike animation when it changes)
+    // third u32 array, TICK_FIELDS per soldier: the tick he was last hit and the tick he died (NEVER if not)
+    pub const HIT_AT: usize = 0;
+    pub const DIED_AT: usize = 1;
+    pub const TICK_FIELDS: usize = 2;
+    pub const NEVER: u32 = u32::MAX;
 }
 
 pub mod squad_buf {
     // f32: anchor x, y, facing, morale (0..1 of max), lean (banner lean from heart), men alive / full
+    pub const X: usize = 0;
+    pub const Y: usize = 1;
+    pub const FACE: usize = 2;
+    pub const MORALE: usize = 3;
+    pub const LEAN: usize = 4;
+    pub const ALIVE_FRAC: usize = 5;
     pub const F32_FIELDS: usize = 6;
     // u32: state (0 idle,1 marching,2 fighting,3 routing,4 fled,5 destroyed) | detached<<8 | selected-by-ui is NOT here (UI state stays in TS)
+    //   bits 0..7   state
+    //   bit  8      detached
+    //   bits 9..12  kind (Kind as u8)
+    //   bit  13     team
+    //   bits 14..15 rank (0..3)
+    //   bits 16..23 full (men at the start, capped at 255)
+    //   bits 24..31 men alive (capped at 255)
 }
+
+/// Words per event in the packed event ring (below).
+pub const EVENT_WORDS: usize = 6;
 
 // ---------------------------------------------------------------------------------------------
 // Events, drained by TS every frame (sound + view). Packed: [code u32, tick u32, x f32, y f32, a u32, b u32]

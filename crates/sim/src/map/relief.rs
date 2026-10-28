@@ -17,8 +17,18 @@ const MASK_WOOD: f64 = 1.5;
 const PAD_BLEND: f64 = 1.5;
 
 pub(super) fn apply(m: &mut BattleMap, main: P) {
-    let mut rng = Rng::new(m.seed.wrapping_mul(92_821).wrapping_add(13));
+    let mut rng = relief_rng(m);
     hills(m, &mut rng, main);
+    heights(m);
+}
+
+/// Relief's own stream, so adding relief never moves the layout.
+pub(super) fn relief_rng(m: &BattleMap) -> Rng {
+    Rng::new(m.seed.wrapping_mul(92_821).wrapping_add(13))
+}
+
+/// The heights from the map's hills, tiles and sites (§3d steps 2–4).
+pub(super) fn heights(m: &mut BattleMap) {
     let masks = Masks::new(m);
     let (hw, hh) = (m.heights_w(), m.heights_h());
     let mut h = Vec::with_capacity(hw * hh);

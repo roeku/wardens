@@ -2,6 +2,7 @@
   "seed": 4,
   "map": { "kind": "keep", "width": 48 },
   "tick": 1800,
+  "bots": [{ "team": 1, "bot": "garrison" }],
   "log": [
     { "tick": 15, "team": 0, "deed": { "do": "move", "who": { "t": "army" }, "to": { "x": 20.0, "y": 13.5 } }, "src": "tap" },
     { "tick": 120, "team": 0, "deed": { "do": "move", "who": { "t": "squad", "id": 4 }, "to": { "x": 18.0, "y": 6.0 }, "via": [{ "x": 12.0, "y": 8.0 }] }, "src": "drag" },

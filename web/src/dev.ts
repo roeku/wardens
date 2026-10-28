@@ -1,5 +1,7 @@
+import type { BattleView } from './battle/battle';
+import { SQUAD_F32, SQUAD_STATE, squadBits, KIND_ORDER } from './contracts';
 import { FWD, PITCH, ZOOMS } from './view/camera';
-import { FOG_NEVER, FOG_SEEN, FOG_SIGHT, setFog } from './view/fog';
+import { FOG_NEVER, FOG_SEEN, FOG_SIGHT } from './view/fog';
 import type { View } from './view/view';
 
 // window.__v: the eyes an agent uses (docs/spec/00-start-here.md §A5). Dev builds only.
@@ -61,9 +63,132 @@ function strays(a: Uint8Array, b: Uint8Array, w: number, h: number, s: { dx: num
   }
 }
 
-export function installDev(view: View): void {
+export function installDev(view: View, battle: BattleView): void {
+  /** Each company: id, team, kind, state, men alive / full, morale (0..1 of max), anchor; and the outcome. */
+  function battleState() {
+    const sim = battle.sim;
+    battle.views.refresh();
+    const q = sim.squad_count();
+    const squads = [];
+    for (let j = 0; j < q; j++) {
+      const w = battle.views.squadU32[j];
+      const o = j * SQUAD_F32.FIELDS;
+      const f = battle.views.squadF32;
+      squads.push({
+        id: j,
+        name: sim.squad_name(j),
+        team: squadBits.team(w),
+        kind: KIND_ORDER[squadBits.kind(w)],
+        state: SQUAD_STATE[squadBits.state(w)],
+        men: `${squadBits.alive(w)}/${squadBits.full(w)}`,
+        morale: Math.round(f[o + SQUAD_F32.MORALE] * 100) / 100,
+        at: [Math.round(f[o + SQUAD_F32.X] * 10) / 10, Math.round(f[o + SQUAD_F32.Y] * 10) / 10],
+      });
+    }
+    const outcome = sim.outcome();
+    return {
+      tick: sim.tick(),
+      seconds: Math.round((sim.tick() / 30) * 10) / 10,
+      bots: battle.bots,
+      clock: { slow: battle.clock.slow, fast: battle.clock.fast, paused: battle.clock.paused },
+      drawn: { men: battle.records.men.length, banners: battle.records.banners.length, hidden: battle.records.hidden },
+      outcome: outcome ? JSON.parse(outcome) : battle.outcome,
+      squads,
+    };
+  }
+
   const v = {
     view,
+    battle,
+    /** The commander bot plays our side (on), or nobody does (off). */
+    pilot(on = true): boolean {
+      battle.pilot(on);
+      return on;
+    },
+    /** The enemy's bot: garrison, general0..2, charge, idle or none. */
+    bot(kind: string): string {
+      battle.bot(kind);
+      return kind;
+    },
+    /**
+     * Fast-forwards the sim `ticks` (with its bots), then lets the figures catch up at once, so a shot right after
+     * shows where everyone is. Returns the tick reached and how long the stepping took.
+     */
+    ff(ticks: number): { tick: number; ms: number } {
+      const ms = battle.fastForward(ticks);
+      battle.settle();
+      view.render();
+      return { tick: battle.sim.tick(), ms: Math.round(ms * 10) / 10 };
+    },
+    /**
+     * Fast-forwards in steps of `chunk` ticks until `test(battle_state())` holds or `max` ticks have passed, e.g.
+     * `__v.ffUntil(s => s.squads.some(q => q.state === 'fighting'))`. Returns the tick reached and whether it held.
+     */
+    ffUntil(test: (s: ReturnType<typeof battleState>) => boolean, max = 9000, chunk = 15): { tick: number; held: boolean } {
+      const end = battle.sim.tick() + max;
+      let held = test(battleState());
+      while (!held && battle.sim.tick() < end) {
+        battle.fastForward(chunk);
+        held = test(battleState());
+      }
+      battle.settle();
+      view.render();
+      return { tick: battle.sim.tick(), held };
+    },
+    pause(on = true): boolean {
+      battle.setPaused(on);
+      view.render();
+      return on;
+    },
+    /** Stops every clock like a pause, without the pause's grey: for shots and the shimmer test. */
+    freeze(on = true): boolean {
+      battle.clock.paused = on;
+      view.render();
+      return on;
+    },
+    fast(on = true): boolean {
+      battle.clock.fast = on;
+      return on;
+    },
+    /** Follow the captain again (F). */
+    follow(on = true): boolean {
+      battle.follow = on;
+      return on;
+    },
+    /** Each company: id, team, kind, state, men alive / full, morale (0..1 of max), anchor; and the outcome. */
+    battle_state: battleState,
+    /** The sim's own text description (as the harness's `look`). */
+    describe(): string {
+      return battle.sim.describe();
+    },
+    /**
+     * Runs `frames` game frames back to back at `dt` (the sim, records, figures and render as in the frame loop),
+     * waiting for the GPU after each (a 1-pixel read), at a `w × h` CSS-pixel window if given. Returns perf().
+     */
+    bench({ frames = 300, dt = 1 / 60, w = 0, h = 0 } = {}) {
+      const r = view.renderer;
+      if (w && h) r.resize(w, h);
+      const ctx = r.gl.getContext();
+      const px = new Uint8Array(4);
+      battle.perf.reset();
+      for (let i = 0; i < frames; i++) {
+        battle.frame(dt);
+        if (!battle.clock.paused) view.time += dt;
+        view.render();
+        battle.perf.mark('render');
+        ctx.readPixels(0, 0, 1, 1, ctx.RGBA, ctx.UNSIGNED_BYTE, px);
+        battle.perf.mark('gpu');
+        battle.perf.end();
+      }
+      const out = { ...battle.perf.report(), drawn: battle.figures.stats(), size: { ...r.size } };
+      if (w && h) view.resize();
+      return out;
+    },
+    /** Frame-time stats (ms) over the last 600 frames: sim step, records, figures, render, total, frame interval. */
+    perf(reset = false) {
+      if (reset) battle.perf.reset();
+      return { ...battle.perf.report(), drawn: battle.figures.stats() };
+    },
     /** Renders a frame and saves it to out/shots/<name>.png through the dev server. */
     async shot(name: string): Promise<string> {
       view.render();
@@ -72,12 +197,16 @@ export function installDev(view: View): void {
       const res = await fetch(`/__shot?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob });
       return ((await res.json()) as { path: string }).path;
     },
+    /** Sets the zoom to one of the 9 steps by index or by its art px per tile (7, 9, … 34). */
     zoom(i: number): number {
-      view.camera.zi = Math.max(0, Math.min(ZOOMS.length - 1, i));
+      const zi = ZOOMS.indexOf(i) >= 0 && i > ZOOMS.length - 1 ? ZOOMS.indexOf(i) : i;
+      view.camera.zi = Math.max(0, Math.min(ZOOMS.length - 1, zi));
       view.render();
       return ZOOMS[view.camera.zi];
     },
+    /** Looks at (x, y) and stops following the captain. */
     focus(x: number, y: number): void {
+      battle.follow = false;
       view.camera.focus.set(x, y);
       view.render();
     },
@@ -88,7 +217,8 @@ export function installDev(view: View): void {
     /**
      * Sets the fog of war for a look at its three levels: 'sight' is all in sight (the default until sight is
      * simulated); 'bands' is never seen in the west third, seen before in the middle and in sight in the east; 'ring'
-     * is in sight within 8 tiles of (x, y), seen before within 14, never seen beyond.
+     * is in sight within 8 tiles of (x, y), seen before within 14, never seen beyond. The battle obeys it (enemies
+     * and the dead outside sight are hidden) until `fog('sight')` hands the fog back to the sim.
      */
     fog(kind: 'sight' | 'bands' | 'ring' = 'sight', x = view.land.w / 2, y = view.land.h / 2): void {
       const { w, h } = view.land;
@@ -102,7 +232,7 @@ export function installDev(view: View): void {
             : FOG_SIGHT;
         }
       }
-      setFog(levels);
+      battle.overrideFog(kind === 'sight' ? null : levels);
       view.render();
     },
     grey(on: boolean): void {

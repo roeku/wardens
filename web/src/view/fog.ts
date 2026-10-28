@@ -99,17 +99,9 @@ export const FOG_VERTEX = /* glsl */ `
   vWorld = (modelMatrix * fogWp).xyz;
 }`;
 
-export const FOG_PARS_FRAGMENT = /* glsl */ `
-uniform sampler2D uFogTex;
-uniform vec2 uMapSize;
-uniform vec3 uHaze;
-uniform vec2 uOrigin;
-uniform vec3 uPix;
-uniform sampler2D uHeights;
-uniform vec4 uExt;
-varying vec3 vWorld;
+/** The three levels and the haze: `fogApply(c, p)` is colour c seen at world (x, z) p. Needs uOrigin declared. */
+const FOG_LEVELS = /* glsl */ `
 ${BAYER}
-${EXACT_PARS_FRAGMENT}
 float fogBayer() { return bayer4(floor(gl_FragCoord.xy) + uOrigin); }
 vec3 fogGreyed(vec3 c, float k) { return mix(c, vec3(dot(c, vec3(0.3, 0.55, 0.15))), k); }
 vec3 fogDusk(vec3 c) { return fogGreyed(c, 0.18) * 0.8 + vec3(0.0, 0.008, 0.03); }
@@ -129,6 +121,28 @@ vec3 fogApply(vec3 c, vec2 p) {
   if (level >= 1.0) return fogDusk(c);
   return fogNight(c);
 }`;
+
+export const FOG_PARS_FRAGMENT = /* glsl */ `
+uniform sampler2D uFogTex;
+uniform vec2 uMapSize;
+uniform vec3 uHaze;
+uniform vec2 uOrigin;
+uniform vec3 uPix;
+uniform sampler2D uHeights;
+uniform vec4 uExt;
+varying vec3 vWorld;
+${EXACT_PARS_FRAGMENT}
+${FOG_LEVELS}`;
+
+/**
+ * Only the fog's colour step, for materials with their own surface work (the figures): the fog uniforms and
+ * `fogApply`. The material declares `uniform vec2 uOrigin` itself.
+ */
+export const FOG_COLOUR_FRAGMENT = /* glsl */ `
+uniform sampler2D uFogTex;
+uniform vec2 uMapSize;
+uniform vec3 uHaze;
+${FOG_LEVELS}`;
 
 /** The material's final colour through the fog, at world (x, z) `p`. */
 export const fogFragment = (p: string) => /* glsl */ `

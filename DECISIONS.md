@@ -448,3 +448,393 @@ lab: web/labs/units.html + web/src/labs/units/.
 **Why (measured, 500 men, 1/6 of them riders, all marching, M5 Pro):** 860 k triangles (the original's heavy battle hit its limit at 1.5 M); `Figures.update` takes 5.7 ms p50 and 7.3 ms p90. When they stand still nothing is uploaded, but posing still takes 4.9 ms. Before the trim: 1.0 M triangles and 8.5 ms.
 **Next levers:** cache the matrices of men whose inputs did not change; fewer segments below zoom 16; drop face, hand and toe detail far away.
 **Spec:** 02-look.md §8 "Known limit".
+
+## D-11 | 2026-10-28 | Day 3: the battle rules (04-battle §2–§8; 03-land §3c, §8; 08-orders §10 step 1)
+**Summary:**
+- 04-battle §2–§8 run headless at 30 Hz:
+  - slots, the cohesion gate, the momentum model with a neighbour grid
+  - the army following its captain in column and line, and `planFront`
+  - melee with charges, homing arrows, height effects
+  - morale, routing, last stands, commanders, saving the last men, recall, the captain's ride
+  - site capture, outcomes, fog per team, and a night hook
+- New: the open-field map (`MapKind::Field`, mirrored).
+- Bots `garrison`, `general0–2`, `commander`, `charge` and `idle` see through their own fog and give orders through the queue.
+- The harness gained `sweep` and bot sessions.
+- The order model is shaped for 08-orders: `Order` plus `Squad.how` (stance, pace, shape, priority); stances read in one place; target choice through one priority score; a per-squad queue with triggers. Field works and the held deployment are hooks only.
+- Built by a delegated agent; checked again before commit.
+**Gates:** the agent's sweeps, and mine on fresh seeds 5000+ (release harness).
+- **Standing reversals:** 0.0003–0.018 per man-second (gate < 0.1).
+- **State flips:** 5.0–8.5 per squad-minute (gate < 10).
+- **Mindless charge vs general1:** the agent: 49.7% over 300 seeds. Mine: 40.0% over 60. Band 20–60%.
+- **Every battle ends.**
+- **Mirror matches:** 49.5% (the spec's "team 1 wins 55%" is gone).
+- **Doing nothing wins 1.7% (1 of 60), against a 0% target: missed.** Each such win is a real defensive win, an idle line beating a weak attack, so it is not forced to zero with a special case.
+- **Determinism:** the golden replay is regenerated and now includes the garrison bot; native and WASM agree. A field replay is added (native). The map and land golden hashes are unchanged.
+**Open:**
+- Doing nothing wins every keep battle at dawn, by the spec's night rule. Day 4's relief from the east must change that.
+- The keep commander wins 93% against today's stand-in garrison; the real garrisons come on day 5.
+- `Deed::Move` needs `pace`.
+- The general is barely better than the charge.
+- No drake breath or myth rules yet.
+
+# Day 3 (the battle): choices the spec left open
+
+Code: crates/sim/src/battle/, crates/sim/src/bots/, crates/sim/src/map/field.rs, crates/harness/src/sweep.rs.
+Spec: docs/spec/04-battle.md §2–§8, 03-land.md §1, §3c, §8; 08-orders.md §1–§7, §10 step 1.
+
+### The order model: a verb, its modifiers, and a queue with triggers
+**Decision:**
+- `Squad.order: Order` is the verb. The spec's variants keep their shape (`Hold{face}`, `Move{to,via,fight,face}`, `Attack{target,via}`, `Take{site,via}`). New ones: `Follow` (with the army at its station), `Guard{ward}` (escort a company or the captain), `Recall{until}`, `Retreat` (the commander saving the last men), `Ride` (the captain's ride).
+- `Squad.how: How` holds the modifiers every verb shares: `stance`, `pursue`, `pace`, `shape`, `files`, `spacing`, `priority`. `How::default()` is 04-battle.md's behaviour exactly. `Squad.files` stays the effective frontage; it is set from `how.files` whenever an order becomes current.
+- `Squad.queue: Vec<Pending { order, how, when, queued }>`. A trigger (`When`) is one of `Done`, `Signal{n}`, `After{s}`, `EnemyNear{at,r}`, `Breaks{id}`, `CaptainAttacked`, `Night`.
+  - The pending order is released at the start of step 2 when its trigger holds. Triggers read only sim state.
+  - A signal is `(n, tick)` in `Battle.signals[team]`; it releases orders queued at or before that tick.
+  - A direct order (any Deed) clears the queue; a released pending order keeps the rest.
+- `Done` means:
+  - a move has arrived (it turns into a hold)
+  - a take holds its site
+  - an attack's target is gone, or routs while the stance doesn't pursue
+  - a recall has reached its station
+  - a retreat has reached home
+- The entry points for the order-language pass are `Battle::queue_order`, `raise_signal` and `command`. They are `pub(crate)`, so nothing outside the sim can change a battle except through Commands.
+
+**Why:** 08-orders.md §10 step 1, and the coordinator's steer. New modifiers never touch the verbs, and the view's existing matches on the four spec variants keep working.
+**Rejected:** a variant per combination (`AttackKind`, `MoveDefensive`…); putting `fight` and `via` into `How` (it would break the existing variant shapes the view codes against).
+**Spec:** 08-orders.md §1, §5, §6; 04-battle.md §1 "Orders".
+
+### What the order-language pass must expose as Deeds
+**Decision:** the Deeds and fields to add in the contracts (I did not edit them):
+- `Deed::Move/Attack/Take/Hold`: an optional `how: How`, a JSON object `{stance, pursue, pace, shape, files, spacing, priority}`. Every field is optional and serde-defaulted. This one field carries stance, pace (walk/quick/double time), formation (shape/files/spacing) and target priority for every verb.
+- Every deed: optional `when: When` (`{"t":"done"}`, `{"t":"signal","n":1}`, `{"t":"after","s":5}`, `{"t":"enemynear","at":P,"r":3}`, `{"t":"breaks","id":2}`, `{"t":"captainattacked"}`, `{"t":"night"}`), and `then: bool` (append to the queue rather than replace it).
+- `Who` selectors resolve in code to several `Who::Squad`. A multi-squad target needs `Who::Squads{ids}`, or one Deed per squad in the same tick.
+- New verbs:
+  - `Deed::Guard{who, ward}` → `Order::Guard` (follow/escort, "cover", screen)
+  - `Deed::Signal{n}` → `raise_signal` ("now!")
+  - `Deed::Form{who, how}`: change the modifiers without changing the verb
+  - `Deed::Stance{who, stance}`: hold fire, fire at will, pursue/stop
+  - `Deed::Face{who, face}`
+  - `Deed::Withdraw{who}`: fall back facing the enemy. This would be `Move` with a new `Facing::Fixed` mode, which the anchor already has.
+  - `Deed::Reserve/Commit`
+  - `Deed::Advance` (§8): clears `Battle.held[team]`
+  - `Deed::Build{who, work, at, face}` (§7): fills `Battle.works`
+- `Deed::Attack` with a target selector: `priority` in `how` lets "their archers" resolve in the sim, through `Battle::priority_score`, rather than in the brain.
+
+**Why:** the model is ready for each of these; only the contract stands between them and the queue.
+**Spec:** 08-orders.md §2–§7, §10 step 2.
+
+### Stances, read in one place
+**Decision:** `Battle::rules(i) -> Rules { engage, seek, reach_only, fire, pursue, leash, skirmish, no_charge }` is the only place that reads the order, state and stance.
+- **Normal:** the spec.
+- **Aggressive:** engage and seek +2 tiles, and pursue.
+- **Defensive:** melee engages only within reach + 1, and never leaves its post by more than 3 (the leash clamps the anchor's drift and the men's targets).
+- **HoldFire:** archers don't loose; men strike only what is in reach.
+- **Skirmish:** ranged men step back from melee foes within 3.5.
+- **Passive:** never engages as a squad; anyone touched still fights back.
+- The numbers are in `StanceTune`.
+
+**Why:** steer item 2. These are cheap enough to build now.
+**Spec:** 08-orders.md §5 "stance".
+
+### The default stance does not pursue
+**Decision:** in the Normal stance a routing foe is struck only while he is in reach (the routing penalty of +0.6 still applies). A squad never takes a router as its threat, and an attack order completes when its target routs. Aggressive, or `pursue: Some(true)`, chases.
+**Why:** the first sweeps had men chasing routers across the map at catchup ×1.4. A general's captain followed a fleeing horseman to the enemy captain and duelled him, and 28 of 30 general-vs-general battles ended with a captain dead in about 40 s. With this, captain deaths fell to about 1–3 in 100.
+**Rejected:** only the +0.6 score (it does not stop a chase); a fixed chase distance.
+**Spec:** 04-battle.md §5 "Target choice"; 08-orders.md §3 "pursue · stop".
+
+### Target priority, scored once
+**Decision:** `Battle::priority_score(team, from, foe, priority)` returns the distance less 12 (`priority_bonus`) for a favoured foe, or scales with the named measure (morale share for shaken; men × worth for weakest or strongest). Squads use it to choose a threat, men use it as a per-foe-squad offset in their target score, and bots use it through `bots::pick`. The priorities are nearest, kind, ranged, shaken, weakest, strongest, commander, attacking-X and one squad.
+**Why:** steer item 3: one scoring function for the squad, its men and the bots.
+**Spec:** 08-orders.md §4, §5.
+
+### Shapes and spacing
+**Decision:** `Shape::Block` is §3a. `Wedge` puts 2r+1 men in rank r, with the point at the anchor. `Ring` puts men round a circle of radius `max(gap, n·gap/2π)` behind the anchor, with the commander in the middle. `How::spacing` multiplies the file gap (loose 1.6, tight 0.85 in `MoveTune`).
+**Why:** steer item 5. Slots are a pure function, so this was cheap.
+**Spec:** 08-orders.md §3 "form".
+
+### Men think on the tick's starting positions, then move together
+**Decision:** step 3 decides every man (target, blow, velocity) from the positions at the start of the tick, then integrates all positions. Blows land together in step 4, as the spec says.
+**Why:** it removes the stepping-order bias the spec lists as an open issue ("team 1 won about 55%"). Measured over 600 seeds of the mirror match: general1 vs general1 49.5%, charge vs charge 49.7%.
+**Rejected:** alternating which side steps first.
+**Spec:** 04-battle.md §1 tick order, §10 "Open issue".
+
+### Slot 0 is the commander's for the company's life
+**Decision:** a company created with a commander (named, not the captain) keeps slot 0 for him. Rank slots are 1..n. When he falls, slot 0 stays empty. Gaps among rank slots are filled by the man holding the highest slot, lowest gap first.
+**Why:** "slots are fixed per man". Re-indexing after his fall would move everybody.
+**Spec:** 04-battle.md §3a.
+
+### A fighting block follows its brawl without creeping back
+**Decision:** a melee anchor drifts by (men's centroid − their slots' centroid)·dt·2, not toward the men's centroid. When the fight ends the block re-forms where its men stand: the anchor jumps by that offset once.
+**Why:** the anchor is the front rank's centre, so drifting toward the men's centroid pulled the block back by half its depth every tick. Without the re-forming, men walked back up to 1.6 tiles to their old slots when a fight ended.
+**Spec:** 04-battle.md §5 "When engaged".
+
+### A company on the move that isn't fighting strikes in passing
+**Decision:** a man stands at a combat point only when his company fights or stands idle. A marching company that doesn't fight, a retreat, a recall, or a hurt captain riding out all keep walking and strike whoever is in reach, as the spec says of a recall.
+**Why:** otherwise a hurt captain, his man in reach of foes, never rode away. Captains fell in most battles.
+**Spec:** 04-battle.md §5 "Recall", "Target choice".
+
+### SETTLE's dead zone holds only for a man nobody pushes
+**Decision:** for a man with any neighbour within `ra+rb`, the arrive term `(d − 0.025)·ARRIVE` applies down to d = 0.025 rather than SETTLE 0.05. SETTLE, ARRIVE, RESPONSE and SEPARATION keep the spec's values.
+**Why:** where two companies' slots overlap slightly (a guard company on the general at the keep, a captain trailing among his bows), the push held a man just outside SETTLE. There the arrive term jumps from 0 to 0.2 t/s, and he flipped direction every tick. Commander vs garrison measured 0.098 standing reversals/s/man, and one field seed 0.79. After the change: 0.0068 and 0.001–0.017 everywhere. The term is continuous, so a pushed man comes to rest against the push. A man nobody pushes behaves exactly as in the spec.
+**Rejected:** a bigger SETTLE, or SETTLE hysteresis (a slower cycle with a larger swing).
+**Spec:** 04-battle.md §3c.
+
+### Men walk strict lines
+**Decision:** men test their straight line with `path::line_clear`: every 0.25 tile is checked, and no diagonal step between two blocked tiles is allowed (A*'s own rule). Their personal routes are pulled with that test (`path::route_clear`). Anchors keep `line_walkable` and `route`.
+**Why:** a man moves one axis at a time. The 0.35-step test let his line cut a corner between two rocks, and he wedged there. His company's cohesion gate then stopped it for good; one general stood still for 300 s.
+**Spec:** 03-land.md §1 "Pathfinding"; 04-battle.md §3c "Path", "Collision".
+
+### Who may engage
+**Decision:**
+- A `Move` engages only with `fight` (arrival turns it into a hold, which engages).
+- A follower engages when it stands at its station (outside the march hysteresis) or when its army's march fights.
+- Retreat and recall never engage.
+- The ride engages unless the captain is out of the fight, or is still riding round to a flank.
+
+**Why:** "not a march without fight". The earlier `fight || not marching` let a moving squad that was already fighting keep fighting for ever.
+**Spec:** 04-battle.md §5 "Engagement".
+
+### Defending the captain applies to every line company near him
+**Decision:** any melee company that isn't horse (not retreating or recalling) within 7 of its captain turns on a foe within 3 of him, whatever its order. An escort guards its ward within `guard_r` = 5.
+**Why:** the text says "line squads within 7 tiles of the captain". Limiting it to followers let a lone enemy captain hunt a general through his own army.
+**Spec:** 04-battle.md §3d "Defending the captain".
+
+### The captain's ride
+**Decision:**
+- **Leaving the fight** (below 50% hp, or 20% lost within 2 s, with hp sampled every 0.5 s) and returning (at 80%) are checked before engagement. Checking them inside the ride never ran while he was engaged.
+- **The trail point** is 3.5 behind the foot line, or behind the rearmost of his own companies in his lane, clear by 1.4. It is continuous, so he never chases a jumping point, and it stays 4 tiles off the map's sides.
+- **His pace** follows the followers' law `min(top, 0.4 + 0.9·d)`, so he keeps a steady lag. He sets off again once the line is 2 ahead (`trail_slack`), and stops within 0.3.
+- **Riding out** goes 5 behind the army, away from `threatPoint` (mid-fight, companies face every way), at full pace while foes are in reach.
+- **He never picks the enemy captain** as the foe to ride at. A duel would decide the battle on one fight.
+
+**Why:** each was found in traces: captains duelling, stop-go every half second, standing inside the bows, riding onto his own edge and withdrawing.
+**Spec:** 04-battle.md §5 "The captain's ride".
+
+### Morale details
+**Decision:**
+- Attackers are foe men in melee contact (gap ≤ reach) with a man of the squad.
+- "With no attackers" also needs no foe to be targeting the squad: being shot at stops the +5/s.
+- The flank angle is measured from the company's centroid, not its front-rank anchor.
+- Outnumbered compares attackers with men alive.
+- A steady commander's company counts itself among the companies within 5.
+- A rally keeps the company's place with the army (a hold, not detached).
+- A last-stand company never routs again.
+
+**Why:** the anchor is at the front rank, so measured from it, attackers on the side of the second rank read as 106°.
+**Spec:** 04-battle.md §5 "Morale", "Routing".
+
+### The enemy-commander rules
+**Decision:** −25 on his fall, the 0.5 pull-out share and −12 on pulling out apply to team 1, and to both sides of an open-field battle.
+**Why:** the spec writes them for "enemy" commanders; a mirror match must be fair.
+**Spec:** 04-battle.md §5 "Commanders on the field".
+
+### Home, fleeing and the last stand
+**Decision:**
+- A routing company is home within 1.5 of its retreat point, or within 1.5 of its own map edge.
+- At home it leaves the map, except the defenders of a keep or town, who make a last stand at morale 30 (Rally event with b = 1).
+- The fled are `alive = false` with `died_at = Tick::MAX`.
+- A saved company (its commander pulling out the last men) retreats the same way. Defenders hold at the keep.
+- The men left are counted with the commander.
+
+**Why:** the view tells fled from fallen by `died_at`.
+**Spec:** 04-battle.md §5 "Routing", "Saving the last men".
+
+### Capture
+**Decision:** a site's capture weight is 1 per company with a living, non-routing man within 1.8, and 3 for the captain. Progress belongs to one team, resets when another team starts capturing, persists while nobody stands there, and freezes while contested.
+**Why:** "the captain weighs 3" reads as companies. By men, one company would take the keep in 3 s.
+**Spec:** 04-battle.md §8 "Holdfast".
+
+### Outcomes and the night
+**Decision:**
+- If both captains fall in the same tick, the higher men × worth wins.
+- Withdrawal applies to team 0 in every battle, and to both sides on the open field.
+- "No defenders" means no team-1 company is left on the field (the general is not counted).
+- If both sides break in the same tick on the field, men × worth decides.
+- **Night hook** for campaign battles (keep, town, ford): the dusk bell at 80% of `300 s × w/48`, then night (`night = true`: sight ×0.6, and the garrison attacks the nearest foe it sees). Dawn comes 70 s later, and the attacker wins if his captain lives.
+- `Battle::time_limit()` gives each type's limit. The relief from the east, the torches and the ford's own win come on day 4.
+
+**Why:** the spec's night rule, without the day-4 content.
+**Spec:** 04-battle.md §8.
+
+### The default and field setups
+**Decision:**
+- The keep's garrison (3 levy companies, D-05) gets its general: a Captain named GENERAL at the keep, added after the companies so their ids stay 5–7.
+- `Setup::field()` puts the same four companies on both sides (GRIM, MAUL, ROOK, FANG facing WIL, ODA, REN, BORS), each side with a captain. Team 1's stations are mirrored left↔right.
+- `Setup::for_map(kind)` chooses the setup. `Setup` gains `general` and `mirror`; `Company` gains `way` and `freed`.
+
+**Why:**
+- The garrison bot's "general rides at the threat" needs a general.
+- The open field is mirror-symmetric, not rotation-symmetric. With rotated stations, team 1's horse took the other wing, and the mirror match measured 40/60 over 100 seeds.
+**Spec:** 04-battle.md §7, §8; 01-flow.md §8.
+
+### The open field
+**Decision:**
+- Blobs are centred in x ∈ [8, W/2), with y and sizes as on the assault map. Anything blobbed into the east half is overwritten by the mirror.
+- There are `max(1, round(0.8·area))` hill pairs, at x ∈ [7 + r, W/2 − 1 − r], and a centre hill with chance 0.5. They use relief's own stream.
+- The road runs through x = 0.5, W/4, W/2, 3W/4, W − 0.5 at y = mid + (0, 2, 3, 2, 0). It is rasterised 4-connected on the west half, then mirrored, and is also handed to the land as `roads`.
+- There are `round(1.5·area)` farm pairs, at least 4 from the road.
+- Deploy is at x = 6 and W − 6; retreat at the edges.
+- Assault and ford generation are untouched (relief was only split into `hills` + `heights`). The land golden and the keep fixture's map hash are unchanged.
+
+**Why:** the spec gives counts per half and leaves placement open; 4-connected roads avoid corner-only joins.
+**Spec:** 03-land.md §3c.
+
+### Arrows, events and ranks
+**Decision:**
+- An arrow whose target falls is lost.
+- Volley: at most one per company per `interval·0.85`.
+- Charge: at most one per company per 3 s.
+- Hit: `b = attacker kind | charge << 8`.
+- CommanderFall for team 0 and FoeCommanderFall for team 1 (`b = team`), each followed by BannerFall (b = 1).
+- BannerFall (b = 0) when a company is destroyed or leaves the map.
+- Kills are counted per company; rank-ups between battles are the campaign's (day 5).
+
+**Why:** event rates the sound can use; the spec gives no rates.
+**Spec:** contracts `EventCode`; 04-battle.md §2 ranks.
+
+### Sight
+**Decision:** a squad sees from its men's centroid. Its spread is the farthest man from that centroid. The squad and site circles are stamped on tile centres. Fog starts with a stamp at tick 0.
+**Spec:** 03-land.md §8.
+
+### Bots
+**Decision:**
+- **Thinking:** the garrison every 1.5 s; the general every 2.4/1.5/1.0 s; charge and commander every 1 s (commander as general1).
+- **"Only if it differs":** a deed is dropped when the squad's current order already matches it. A move matches within 1 tile, or a hold standing within 1 tile of its point.
+- **Charge:** every company attacks the nearest foe it sees, or marches on the enemy's deploy point with fight. Once a foe is seen, the army attacks, which puts the captain on his ride. Mindless, but the captain rides with his men. Before this the charge won 6.7% of field battles; the captain's aura and blade belong to "everyone attacks".
+- **General:**
+  - It remembers foes it saw for 25 s (`memory_s`, as the garrison does). Its front stops 8 short of the enemy, beyond sight; without memory it never made contact again.
+  - With no line companies left, its bows lead.
+  - Horse go round a flank point 6 to the side of their prey.
+  - Skill 2 keeps the captain away from the nearest foe and 4 off the edges until 80% hp, then rides again.
+- **Commander:** general1 that also sends the nearest company to take the keep when no foe it sees is within 6 of it.
+- **Garrison sallies:** they stand in a `line_spots` line. "Everyone at the slowest's pace" needs a `pace` on `Deed::Move` (see the Deeds above).
+
+**Why:** traces of each failure.
+**Spec:** 04-battle.md §7; 01-flow.md §8.
+
+### The sweep's metrics
+**Decision:**
+- **Standing reversals:** a man counts while his squad has been Idle for at least 1 s and he has no target. A reversal is two consecutive tick displacements faster than 0.05 tiles/s with a negative dot product. The rate is per man-second standing. The sweep also prints the count over every idle man, settled or not.
+- **State flips:** Marching↔Idle per squad, the captain included, per squad-minute on the field.
+- **Share of men fighting:** men in contact or shooting, over men alive, averaged from the first blow to the end.
+
+**Why:** one turn per man the instant a fight ends is a change of direction, not the shiver the gate measures. The strict count is printed too, so nothing hides.
+**Spec:** 00-start-here.md §A5.
+
+### Replays may name bots; the golden fixture runs one
+**Decision:**
+- `Replay.bots: [{team, bot}]` re-runs deterministic bots with the replay (they are not logged). `harness play <s> new … --us/--them` uses it.
+- `crates/sim/tests/fixtures/replay.json` now has the garrison bot on team 1, so the WASM test checks bot thinking against the native golden without touching sim-wasm.
+- `fixtures/field.json` (charge vs general2 with a drawn front) is checked natively.
+
+**Spec:** 01-flow.md §8; DECISIONS.md D-05.
+
+### Hooks for field works and the held deployment
+**Decision:**
+- `Battle.works: Vec<Work { id, kind: Stakes|Barricade|Bridge|Watchtower, team, at, face, built, hp }>` is empty.
+- Movement asks `walkable()` (→ `work_blocks`), blows ask `work_stakes` (charge lost, chargeTaken ×0.4), arrows ask `work_cover`, and sight asks `work_sight`. All are neutral now.
+- `Battle.held[team]` stops every company's anchor except the captain's (08-orders.md §8 "held before contact").
+
+**Why:** steer follow-up. They plug in without touching the rules.
+**Spec:** 08-orders.md §7, §8.
+
+## D-12 | 2026-10-28 | Day 3: the battle on screen (ENGINE.md boundary; 04-battle §1, §9)
+**Summary:**
+- `crates/sim-wasm` packs zero-copy per-frame buffers (`frame.rs`) for soldiers, squads, events and fog, and drives the bots.
+- `web/src/battle/` holds the 30 Hz accumulator with slow-time, builds the figure and banner records from the buffers, and hooks the fog into figures. The camera follows the captain.
+- `?pilot=1` plays a whole battle. The contracts gain aim, engaged, hit and death ticks, and a richer squad record.
+- Built by a delegated agent; checked again before commit.
+**Measured:**
+- **Frame time:** 1.8–4.1 ms p50 for 76–194 men (bench with GPU sync).
+- **Sim cost:** 0.011–0.038 ms per tick.
+- **Shimmer:** 0 bad frames at zooms 7, 16 and 34, except 2–5 of 80 frames with one pixel off by 1/255 in dense melee at zoom 34 (figure normals and the hemisphere light).
+**Open:**
+- **Men stand in the drawn river and on crags (D-08).** Clearly visible in battle shots; fix before the demo.
+- A company inside a wood is hidden by its trees.
+- The blight-men are drawn as human levy under red banners, and the enemy general like our captain. The Wardens needs a visible blight (D-02).
+- The recruit bit, night torches, sound and the end-of-battle flow are for day 4.
+
+# Decisions: day 3, the battle on the game page (view side)
+
+Choices made where the spec is silent, for the live battle view: `crates/sim-wasm/src/{lib,frame,compat}.rs`,
+`web/src/battle/*`, `web/src/input/battle-keys.ts`, and the contract additions in `contracts.rs` / `contracts.ts`.
+
+### The packed buffers are interleaved records, refilled by an explicit `sync()`
+**Decision:** soldier k's f32 field F is `f32[k·F32_FIELDS + F]` (the u32 bits, the strike counter and the hit/death ticks are separate arrays, one entry per soldier). The view calls `sync()` once per frame after stepping, then `drain_events()`, then `Views.refresh()`. The buffers are reserved at battle start (soldiers `max(1024, 2n)`, squads `max(128, 2n)`, events 4,096); if one outgrows its reserve it moves and `layout()` is bumped, and `Views.refresh()` re-creates every view when `memory.buffer` or `layout()` changes.
+**Why:** a frame steps 0–2 ticks (more under ×2 or a fast-forward); packing once per frame instead of at the end of every `step` costs nothing on idle frames. One record per soldier is how the constants `X = 0 … HP = 4` read. Checking only `memory.buffer` (the old `Views`) misses a Vec that reallocated without the memory growing.
+**Rejected:** separate f32 arrays per field (true struct-of-arrays: more pointers to pass, no gain for a 200-man loop); packing at the end of `step` (wasted on fast-forwards).
+**Spec:** docs/engine/ENGINE.md "The boundary"; contracts `soldier_buf`, `squad_buf`.
+
+### Contract additions: aim, engaged, hit and death ticks, squad bits, event stride
+**Decision:**
+- `soldier_buf`: `AIM_X`, `AIM_Y` (where the man's target stands; NaN when he has none), so `F32_FIELDS = 7`; bit 28 of the u32, `engaged` (in contact or shooting this tick); a third u32 array of `TICK_FIELDS = 2` per soldier, `HIT_AT`, `DIED_AT`, with `NEVER = u32::MAX` (the sim's `Tick::MAX`).
+- `squad_buf`: the f32 field indices are named; the u32 keeps `state | detached<<8` and adds kind (bits 9–12), team (13), rank (14–15), full (16–23) and men alive (24–31).
+- `EVENT_WORDS = 6`.
+**Why:** the figures need the aim for archers and for a standing man's turn (04-battle.md §9 priority 3), and the hit flash and the topple need ages that come from the sim, never a view timer. A banner needs its company's kind, team, rank, full size and losses (tatters), which the squad record lacked.
+**Spec:** 04-battle.md §9; 02-look.md §6.
+
+### FACE is resolved in the sim wrapper, in §9's order; the aim is the sim's target
+**Decision:** FACE = the direction of the man's velocity when his pace is over 0.35 tiles/s, else the direction of his target (`Soldier::target`, a soldier index), else his company's facing. AIM is the target's position. A breathing beast facing its target (priority 1) waits for beasts. The figures still turn at 7 rad/s and use the aim themselves when slow.
+**Why:** one place applies the spec's priority, from the sim's own choice of foe; the figure layer's rule (aim when slow, else the given face) agrees with it.
+**Rejected:** (before the sim had targets) the nearest enemy in reach, found by the wrapper: it disagreed with whom the man actually struck.
+**Spec:** 04-battle.md §5 "Target choice per man", §9 "Facing".
+
+### Hit and death ages from the sim's ticks; men who left the field are not drawn
+**Decision:** a tick number means "during that tick"; the age is `(tick − 1 − at)/30 + acc` seconds, where `tick` is the ticks stepped so far and `acc` the accumulator's remainder (so a hit shows its white for the full 0.1 s, starting 0–1/30 s in). A man not alive whose `died_at` is never left the field with his fleeing company: he is not drawn (no corpse). After a fast-forward (`__v.ff`) the figures are advanced by one second at once, so topples are done and blows over.
+**Why:** 04-battle.md §9: animations come from simulation events, never a timer of the view's own; and "the dead stay where they fell", which a man who walked off the map did not do.
+**Spec:** 04-battle.md §9 "Hit flash", "The dead stay"; 02-look.md §5 "Death".
+
+### The guard stance: the company fights, or the man is in contact
+**Decision:** `ManRecord.engaged` (the guard, levelled spear and shooting stances) is set while his company's state is Fighting or while he himself is engaged (in contact or shooting this tick).
+**Why:** the figure layer reads it as "his company is fighting"; a man struck while his company still marches should raise his guard too.
+**Spec:** 02-look.md §5 "Stances".
+
+### Banners stand by the commander, eased like a man
+**Decision:** a company's banner stands 0.3 tiles to its commander's left (the left of the company's facing) while he lives, else at the middle of its living men; it eases toward that spot by 1 − e^(−16·dt) as men do, and snaps when it first appears. No banner for a fled or destroyed company or one with no men left; a routing company's banner is passed with `routing` (the figure layer hides it). Heart = morale ÷ max morale. The player's levy carry linen until rank 2 (out/decisions-figures.md).
+**Why:** BannerRecord asks for "the anchor or the bearer"; the anchor is the middle of the front rank, where a pole would stand among the spears. Beside the commander, behind the ranks, the banner marks the company and never runs through a man. Without easing it stepped at 30 Hz.
+**Rejected:** the anchor; the pole exactly on the commander (it ran through his head).
+**Spec:** 02-look.md §6 "Pole and behaviour"; 04-battle.md §5 "Commanders on the field".
+
+### Enemies and the dead are hidden on the CPU; the fog's colour is a figure shader hook
+**Decision:** each frame the records leave out every enemy (alive or dead), every corpse, and every enemy banner whose tile is not in sight (fog byte 2); our living men and banners are always drawn. A hook in `figureShaderHooks` passes the figure's root (x, z) as a flat varying and runs the land's `fogApply` on the final colour, so a drawn figure takes the same dithered dusk and night levels and the haze past the map's edge. The fog is read at the root, so a man is never split between two levels.
+**Why:** "Enemy units are simply hidden outside sight": a whole man disappears, never half of one at a tile edge, and the hidden men cost no posing. The shader hook was the open item of D-08/D-09.
+**Rejected:** discarding fragments outside sight (cuts men in half at the edge, still poses them); the per-pixel world position for the fog level (a man at a boundary stippled across his height).
+**Spec:** 02-look.md §3 "Fog of war"; DECISIONS.md D-08 "Open", D-09 "Open".
+
+### Figures get exact depth too
+**Decision:** the same hook sets each figure vertex's depth to the exact `(p·VIEW + BACK − NEAR)/(FAR − NEAR)` of its world point (root + relative), leaving the exact clip's x and y alone.
+**Why (measured with `__v.shimmer` on a frozen battle, keep/48 seed 4, 60 steps of 0.1 px):** through the camera's matrices the depth wobbled in its last bits as the view panned; where a hoof met a slope the land (which writes exact depth) and the horse took turns at one pixel: 4 bad frames of 1 pixel at zoom 16, 0 with the figures hidden. With exact depth: 0 bad frames at zooms 7, 16 and 34, right and up, 80 steps each.
+**Left open:** in a dense melee at zoom 34, one pixel flips by 1/255 in 2–5 frames of 80. It is the hemisphere light: with its intensity set to 0 the flips vanish. The figures' interpolated normal lands either side of the 1/1024 rounding step of the hemisphere weight (out/decisions-figures.md); the fix is an exact or flat normal for that term in `figures/material.ts`.
+**Spec:** 02-look.md §9 "Never shimmer"; DECISIONS.md D-06 (the fixed camera plane).
+
+### The camera follows the captain; zooming does not stop it
+**Decision:** each frame the focus eases toward our captain's sim position at rate 3 (`easeTo`) while following. A drag that moves, or a key pan, stops it; F (and `__v.follow()`) starts it again. The wheel and +/− zoom keep following. At battle start the focus is put on the captain at once; after a fast-forward too.
+**Why:** the spec says "until the player pans"; zooming toward the cursor and then easing back to the captain reads as the camera being held, not lost.
+**Rejected:** zoom also ending the follow (a zoom-in to watch the captain's company would then need an F).
+**Spec:** 02-look.md §2 "Controls"; 01-flow.md §2 "Camera follow".
+
+### Pause and ×2 are keys now; pause freezes every clock
+**Decision:** Space or P pauses: the sim stops, the pause grey is on, and the cloth and water clocks stand still too (dt 0 for the figures). X toggles ×2. `slow` eases toward 0.35 for 0.9 s (real time) after one of our commanders falls and 0.7 s after an enemy's (the CommanderFall event, by the squad's team; FoeCommanderFall counts as an enemy's), and toward 0.3 while `clock.drawing` is set (day 4's input sets it). A frame steps at most 12 ticks; a longer hitch is dropped.
+**Why:** the accumulator is this module's; the keys need no marks. The spec gives "0.35 for 0.9 s … and 0.7 s after an enemy commander falls": the 0.7 is read as the duration, with the same 0.35.
+**Rejected:** cloth waving on in pause (the pause would not be a still picture to read, and the shimmer test needs a still one).
+**Spec:** 04-battle.md §1 "Fixed tick"; 01-flow.md §2 "Pause and keys".
+
+### The light is the clock, in steps of 1/256
+**Decision:** `dayT = battle seconds / daylight`, rounded down to 1/256, where daylight is the sim's `time_limit()` (field: 360 s × width/48), less the 70 s of night on the other maps (300 s × width/48).
+**Why:** 02-look.md §3 makes t "battle time / time limit", with night after the day runs out (04-battle.md §8). The sun's shadow camera re-fits whenever t changes (D-06), so a continuous t would re-fit it every frame and crawl every shadow edge; at 1/256 it re-fits every 1.2–2 s by an amount far below a pixel for most shadows.
+**Rejected:** a fixed noon (no clock at all); a continuous t (shadow crawl).
+**Spec:** 02-look.md §3; 04-battle.md §8 "Battle time in a campaign".
+
+### Bots run inside the WASM step; who plays whom
+**Decision:** `Battle.set_bot(team, kind)` keeps one of the sim's bots per side in the wrapper (`BotKind::parse`, `Bot::new`); `step(n)` asks each to think before every tick and queues its commands through `apply`, as the sim's own `Replay` does. The enemy plays `garrison` on keep and town maps and `general1` on the others (ford, field) unless `?enemy=` says otherwise; our side has no bot unless `?pilot=1` or `__v.pilot()` gives it the `commander`.
+**Why:** the spec's bots think every tick through the order queue; doing it inside `step` keeps a fast-forward one WASM call.
+**Spec:** 04-battle.md §7; 01-flow.md §8 "Bots".
+
+### `?army=big`: nine companies a side
+**Decision:** our side: 3 spear, 2 shield, 2 bow, 2 horse (all with commanders) and the captain. The enemy on a held place (keep, town, ford): 5 levy, 2 spear, 2 archer without commanders, plus the map's own general; on the open field the same nine kinds as ours, named, mirrored round their general. Built in the wrapper (`Battle.muster(seed, map_json, army)`) on `Setup::for_map`.
+**Why:** the performance gate asks for 4–9 companies a side; the muster that picks armies is day 5.
+**Spec:** 01-flow.md §5 `?army=big`.
+
+### Measuring: `__v.perf()` and `__v.bench()`
+**Decision:** the frame loop times the sim step, the record build, the figures' update and the render submission; `__v.bench({frames, dt, w, h})` runs frames back to back at a given window size and waits for the GPU after each (a 1-pixel read), so it also measures when the page gets no animation frames (a hidden pane).
+**Why:** CPU stage times alone hide the GPU; the pane the agent drives is often hidden, where requestAnimationFrame does not run.
+**Spec:** 01-flow.md §8 "Performance".
