@@ -1,4 +1,4 @@
-import { Builder, ball, cone, fixed, rags, rod, shade, tube, type V3 } from './geom';
+import { Builder, ball, cone, fixed, rags, rod, shade, tube, type Paint, type V3 } from './geom';
 import { BONE, BONE_DARK, CROSSBAR, IRON, MANE, POLE, WOOD } from './palette';
 import type { PartDef } from './parts';
 
@@ -147,6 +147,39 @@ function eyes(b: Builder, x: number, y: number, z: number, r: number): void {
   }
   b.axisAt = null;
 }
+
+/** The broodlord's three horn shapes (head frame), each painted `root` at the skull and `body` along the horn. */
+const HORN_SHAPES: readonly ((b: Builder, root: Paint, body: Paint) => void)[] = [
+  // the great forward-sweeping pair, and a swept-back pair
+  (b, root, body) => {
+    for (const s of [-1, 1]) {
+      b.paint = root;
+      rod(b, [-0.01, 0.07, s * 0.045], [-0.02, 0.1, s * 0.1], 0.022, 6, 0.026);
+      b.paint = body;
+      tube(b, [[-0.02, 0.1, s * 0.1], [-0.005, 0.15, s * 0.155], [0.045, 0.19, s * 0.17], [0.1, 0.205, s * 0.148], [0.14, 0.2, s * 0.115]], 0.028, 0.008, 6, true);
+      tube(b, [[-0.03, 0.07, s * 0.04], [-0.09, 0.09, s * 0.062], [-0.135, 0.07, s * 0.075], [-0.15, 0.03, s * 0.08]], 0.018, 0.006, 5, true);
+    }
+  },
+  // ram's curls
+  (b, root, body) => {
+    for (const s of [-1, 1]) {
+      b.paint = root;
+      rod(b, [-0.01, 0.07, s * 0.045], [-0.025, 0.1, s * 0.09], 0.026, 6, 0.028);
+      b.paint = body;
+      tube(b, [[-0.025, 0.1, s * 0.09], [-0.075, 0.115, s * 0.12], [-0.115, 0.075, s * 0.135], [-0.105, 0.02, s * 0.14], [-0.06, -0.005, s * 0.135], [-0.025, 0.02, s * 0.125], [-0.03, 0.05, s * 0.12]], 0.03, 0.01, 6, true);
+    }
+  },
+  // tall and upswept, with a short back pair
+  (b, root, body) => {
+    for (const s of [-1, 1]) {
+      b.paint = root;
+      rod(b, [-0.01, 0.07, s * 0.045], [-0.01, 0.105, s * 0.085], 0.022, 6, 0.024);
+      b.paint = body;
+      tube(b, [[-0.01, 0.105, s * 0.085], [0.0, 0.15, s * 0.125], [-0.005, 0.21, s * 0.14], [0.01, 0.265, s * 0.12], [0.035, 0.295, s * 0.095]], 0.024, 0.007, 6, true);
+      tube(b, [[-0.03, 0.07, s * 0.04], [-0.08, 0.085, s * 0.055], [-0.11, 0.065, s * 0.065]], 0.015, 0.006, 5, true);
+    }
+  },
+];
 
 const RAG_LENS = [0.09, 0.06, 0.1, 0.07, 0.05, 0.08, 0.1, 0.06, 0.09, 0.05, 0.08, 0.07];
 
@@ -469,13 +502,26 @@ export const BLIGHT_PARTS = {
       ball(b, { c: [0.035, 0.1, 0], r: [0.095, 0.032, 0.12], seg: 10, rings: 3 });
     },
   },
-  /** A shaggy mane over the hump and neck, and bone spines down the back. */
+  /** A shaggy mane over the hump and neck (dyed: MANE, or a face's own), and bone spines down the back. */
   blMane: {
     build(b) {
-      b.paint = fixed(MANE);
+      b.paint = shade(1);
       ball(b, { c: [-0.045, 0.232, 0], r: [0.095, 0.062, 0.125], seg: 10, rings: 4 });
       for (const z of [-0.075, 0.075]) ball(b, { c: [0.005, 0.255, z], r: [0.062, 0.05, 0.06], seg: 7, rings: 3 });
       for (const z of [-0.06, 0, 0.06]) cone(b, [-0.09, 0.2, z], [-0.15, 0.27, z * 1.3], 0.03, 5);
+      b.paint = fixed(BONE_DARK);
+      for (const z of [-0.05, 0.05]) cone(b, [-0.06, 0.26, z], [-0.1, 0.34, z * 1.5], 0.016, 4);
+      cone(b, [-0.1, 0.22, 0], [-0.17, 0.3, 0], 0.016, 4);
+    },
+  },
+  /** A short crest instead of the mane: a ridge of dyed bristles along the neck and hump, and the bone spines. */
+  blCrest: {
+    build(b) {
+      b.paint = shade(1);
+      for (let i = 0; i < 6; i++) {
+        const x = 0.05 - i * 0.03, y = 0.29 - i * 0.012;
+        cone(b, [x, y - 0.03, 0], [x - 0.035, y + 0.035, 0], 0.024, 5);
+      }
       b.paint = fixed(BONE_DARK);
       for (const z of [-0.05, 0.05]) cone(b, [-0.06, 0.26, z], [-0.1, 0.34, z * 1.5], 0.016, 4);
       cone(b, [-0.1, 0.22, 0], [-0.17, 0.3, 0], 0.016, 4);
@@ -504,19 +550,48 @@ export const BLIGHT_PARTS = {
       for (const s of [-1, 1]) cone(b, [0.088, -0.006, s * 0.022], [0.094, -0.042, s * 0.024], 0.009, 4);
     },
   },
-  /** The broodlord's horns (fixed bone; thin enough to need the swell far away). */
-  blHorns: {
-    thin: 0.008,
+  /** A boar's skull: a long narrow snout ending in a flat nose, a slim jaw and tusks curling up. */
+  blHead1: {
     build(b) {
-      for (const s of [-1, 1]) {
-        b.paint = fixed(BONE_DARK);
-        rod(b, [-0.01, 0.07, s * 0.045], [-0.02, 0.1, s * 0.1], 0.022, 6, 0.026);
-        b.paint = fixed(BONE);
-        tube(b, [[-0.02, 0.1, s * 0.1], [-0.005, 0.15, s * 0.155], [0.045, 0.19, s * 0.17], [0.1, 0.205, s * 0.148], [0.14, 0.2, s * 0.115]], 0.028, 0.008, 6, true);
-        tube(b, [[-0.03, 0.07, s * 0.04], [-0.09, 0.09, s * 0.062], [-0.135, 0.07, s * 0.075], [-0.15, 0.03, s * 0.08]], 0.018, 0.006, 5, true);
-      }
+      b.paint = shade(1);
+      rod(b, [-0.02, -0.06, 0], [0, 0, 0], 0.056, 8);
+      ball(b, { c: [0, 0.042, 0], r: [0.064, 0.054, 0.058], seg: 9, rings: 4 });
+      ball(b, { c: [0.075, 0.014, 0], r: [0.078, 0.03, 0.036], seg: 8, rings: 3 });
+      b.paint = shade(0.6);
+      ball(b, { c: [0.152, 0.016, 0], r: [0.01, 0.024, 0.028], seg: 6, rings: 2 });
+      b.paint = shade(0.78);
+      ball(b, { c: [0.06, -0.012, 0], r: [0.058, 0.016, 0.03], seg: 7, rings: 3 });
+      ball(b, { c: [0.045, 0.068, 0], r: [0.03, 0.014, 0.06], seg: 7, rings: 2 });
+      b.paint = fixed(BONE);
+      for (const s of [-1, 1]) cone(b, [0.075, -0.012, s * 0.03], [0.062, 0.05, s * 0.052], 0.011, 4);
     },
   },
+  /** An ape's skull: a short deep muzzle over a heavy jaw, the fangs of an underbite. */
+  blHead2: {
+    build(b) {
+      b.paint = shade(1);
+      rod(b, [-0.02, -0.06, 0], [0, 0, 0], 0.058, 8);
+      ball(b, { c: [0, 0.042, 0], r: [0.066, 0.058, 0.062], seg: 9, rings: 4 });
+      ball(b, { c: [0.05, 0.012, 0], r: [0.046, 0.04, 0.05], seg: 8, rings: 3 });
+      b.paint = shade(0.6);
+      ball(b, { c: [0.09, 0.024, 0], r: [0.01, 0.014, 0.026], seg: 6, rings: 2 });
+      b.paint = shade(0.78);
+      ball(b, { c: [0.052, -0.028, 0], r: [0.052, 0.03, 0.054], seg: 8, rings: 3 });
+      ball(b, { c: [0.045, 0.074, 0], r: [0.036, 0.02, 0.068], seg: 7, rings: 2 });
+      b.paint = fixed(BONE);
+      for (const s of [-1, 1]) cone(b, [0.088, -0.02, s * 0.026], [0.092, 0.014, s * 0.028], 0.009, 4);
+    },
+  },
+  /** The broodlord's horns (fixed bone; thin enough to need the swell far away). */
+  blHorns: { thin: 0.008, build: (b) => HORN_SHAPES[0](b, fixed(BONE_DARK), fixed(BONE)) },
+  /** Ram's curls: each horn rolls back, down and forward round the ear (a face's variant, person.ts `brute`). */
+  blHorns1: { thin: 0.008, build: (b) => HORN_SHAPES[1](b, fixed(BONE_DARK), fixed(BONE)) },
+  /** Tall horns sweeping up and out like a lyre, with a short back pair (a face's variant, person.ts `brute`). */
+  blHorns2: { thin: 0.008, build: (b) => HORN_SHAPES[2](b, fixed(BONE_DARK), fixed(BONE)) },
+  /** The same three, dyed: a face's black or ash horns (the root a shade darker). */
+  blHornsD0: { thin: 0.008, build: (b) => HORN_SHAPES[0](b, shade(0.8), shade(1)) },
+  blHornsD1: { thin: 0.008, build: (b) => HORN_SHAPES[1](b, shade(0.8), shade(1)) },
+  blHornsD2: { thin: 0.008, build: (b) => HORN_SHAPES[2](b, shade(0.8), shade(1)) },
   blEyes: {
     glow: true,
     shadow: false,

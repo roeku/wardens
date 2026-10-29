@@ -19,10 +19,10 @@ const typing = (e: KeyboardEvent) => {
   return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
 };
 
-/** Binds the keys; returns the per-frame pan by held keys. */
-export function bindKeys(view: View, battle: BattleView, input: BattleInput): (dt: number) => void {
+/** Binds the keys; returns the per-frame pan by held keys, and how to unbind them. */
+export function bindKeys(view: View, battle: BattleView, input: BattleInput): { frame: (dt: number) => void; dispose: () => void } {
   const held = new Set<string>();
-  window.addEventListener('keydown', (e) => {
+  const down = (e: KeyboardEvent) => {
     if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
     if (PAN_KEYS[e.code]) {
       held.add(e.code);
@@ -50,10 +50,19 @@ export function bindKeys(view: View, battle: BattleView, input: BattleInput): (d
     }
     if (e.key === '+' || e.key === '=') view.camera.zoomAt(1, 0, 0, view.renderer.size.px);
     else if (e.key === '-' || e.key === '_') view.camera.zoomAt(-1, 0, 0, view.renderer.size.px);
-  });
-  window.addEventListener('keyup', (e) => held.delete(e.code));
-  window.addEventListener('blur', () => held.clear());
-  return (dt) => {
+  };
+  const up = (e: KeyboardEvent) => held.delete(e.code);
+  const blur = () => held.clear();
+  window.addEventListener('keydown', down);
+  window.addEventListener('keyup', up);
+  window.addEventListener('blur', blur);
+  const dispose = () => {
+    window.removeEventListener('keydown', down);
+    window.removeEventListener('keyup', up);
+    window.removeEventListener('blur', blur);
+    held.clear();
+  };
+  const frame = (dt: number) => {
     let dx = 0;
     let dy = 0;
     for (const code of held) {
@@ -65,4 +74,5 @@ export function bindKeys(view: View, battle: BattleView, input: BattleInput): (d
       battle.follow = false;
     }
   };
+  return { frame, dispose };
 }

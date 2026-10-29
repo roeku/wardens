@@ -1,0 +1,3132 @@
+{
+  "about": "The broodlord eval's situations (06-voice.md §8): the blight's field (crates/sim-wasm/src/broodlord_api.rs broodlord_field) at moments of bot battles, the commander bot for the warband against the garrison (keep, town) or general1 (field), 48 wide, with a way for each in turn. Made by `cargo test -p sim-wasm --lib broodlord_api::tests::situations -- --ignored`.",
+  "situations": [
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 1.0,
+          "id": 12,
+          "x": 41.0,
+          "y": 13.0
+        },
+        "facing": "west",
+        "foesSeen": [],
+        "ground": [
+          {
+            "name": "FELL",
+            "r": 5.0,
+            "type": "hill",
+            "x": 26.0,
+            "y": 5.0
+          },
+          {
+            "name": "DOWNS",
+            "r": 4.0,
+            "type": "hill",
+            "x": 33.0,
+            "y": 16.0
+          },
+          {
+            "name": "COPSE",
+            "type": "wood",
+            "x0": 10,
+            "x1": 18,
+            "y0": 17,
+            "y1": 21
+          },
+          {
+            "name": "HAZELS",
+            "type": "wood",
+            "x0": 27,
+            "x1": 30,
+            "y0": 21,
+            "y1": 26
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT1",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 40.0,
+            "y": 0.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT2",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 40.0,
+            "y": 4.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT3",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 40.0,
+            "y": 8.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 12.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 9,
+            "kind": "trolls",
+            "men": 3,
+            "name": "TROLLS1",
+            "state": "idle",
+            "unit": "troll",
+            "x": 40.0,
+            "y": 17.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES1",
+            "state": "idle",
+            "unit": "drake",
+            "x": 41.0,
+            "y": 21.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES2",
+            "state": "idle",
+            "unit": "drake",
+            "x": 41.0,
+            "y": 26.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "NEST",
+            "site": 0,
+            "type": "keep",
+            "x": 43.0,
+            "y": 13.0
+          },
+          {
+            "holder": "none",
+            "name": "THORPE",
+            "site": 1,
+            "type": "village",
+            "x": 19.0,
+            "y": 8.0
+          },
+          {
+            "holder": "none",
+            "name": "GRANGE",
+            "site": 2,
+            "type": "village",
+            "x": 16.0,
+            "y": 24.0
+          },
+          {
+            "holder": "ours",
+            "name": "SHRINE",
+            "site": 3,
+            "type": "shrine",
+            "x": 31.0,
+            "y": 15.0
+          },
+          {
+            "holder": "ours",
+            "name": "BEACON",
+            "site": 4,
+            "type": "tower",
+            "x": 34.0,
+            "y": 22.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 4.0,
+          "y": 13.5
+        },
+        "tick": 300
+      },
+      "map": "keep",
+      "n": 1,
+      "s": 10,
+      "seed": 7,
+      "way": "reckless"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 1.0,
+          "id": 12,
+          "x": 32.0,
+          "y": 11.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "CAPTAIN",
+            "kind": "captain",
+            "men": 1,
+            "squad": 0,
+            "state": "marching west",
+            "strength": 500.0,
+            "x": 27.0,
+            "y": 17.0
+          },
+          {
+            "id": "WIL",
+            "kind": "spear",
+            "men": 6,
+            "morale": 0.17,
+            "squad": 1,
+            "state": "routing",
+            "strength": 120.0,
+            "x": 28.0,
+            "y": 10.0
+          },
+          {
+            "id": "ODA",
+            "kind": "shield",
+            "men": 3,
+            "morale": 0.13,
+            "squad": 2,
+            "state": "routing",
+            "strength": 91.0,
+            "x": 25.0,
+            "y": 16.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 8,
+            "squad": 3,
+            "state": "marching north-east",
+            "strength": 84.0,
+            "x": 25.0,
+            "y": 15.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "FELL",
+            "r": 5.0,
+            "type": "hill",
+            "x": 26.0,
+            "y": 5.0
+          },
+          {
+            "name": "DOWNS",
+            "r": 4.0,
+            "type": "hill",
+            "x": 33.0,
+            "y": 16.0
+          },
+          {
+            "name": "COPSE",
+            "type": "wood",
+            "x0": 10,
+            "x1": 18,
+            "y0": 17,
+            "y1": 21
+          },
+          {
+            "name": "HAZELS",
+            "type": "wood",
+            "x0": 27,
+            "x1": 30,
+            "y0": 21,
+            "y1": 26
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 11,
+            "morale": 0.91,
+            "name": "BLIGHT1",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 29.0,
+            "y": 8.0
+          },
+          {
+            "doing": "attacking WIL",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 5,
+            "morale": 0.0,
+            "name": "BLIGHT2",
+            "state": "routing",
+            "unit": "blightman",
+            "x": 32.0,
+            "y": 10.0
+          },
+          {
+            "doing": "falling back to SHRINE",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 7,
+            "morale": 0.41,
+            "name": "BLIGHT3",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 40.0,
+            "y": 12.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 13.0
+          },
+          {
+            "doing": "attacking CAPTAIN",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 2,
+            "morale": 0.64,
+            "name": "DRAKES1",
+            "state": "marching",
+            "unit": "drake",
+            "x": 33.0,
+            "y": 17.0
+          },
+          {
+            "doing": "attacking CAPTAIN",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES2",
+            "state": "marching",
+            "unit": "drake",
+            "x": 32.0,
+            "y": 18.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "NEST",
+            "site": 0,
+            "type": "keep",
+            "x": 43.0,
+            "y": 13.0
+          },
+          {
+            "holder": "none",
+            "name": "THORPE",
+            "site": 1,
+            "type": "village",
+            "x": 19.0,
+            "y": 8.0
+          },
+          {
+            "holder": "none",
+            "name": "GRANGE",
+            "site": 2,
+            "type": "village",
+            "x": 16.0,
+            "y": 24.0
+          },
+          {
+            "holder": "ours",
+            "name": "SHRINE",
+            "site": 3,
+            "type": "shrine",
+            "x": 31.0,
+            "y": 15.0
+          },
+          {
+            "holder": "ours",
+            "name": "BEACON",
+            "site": 4,
+            "type": "tower",
+            "x": 34.0,
+            "y": 22.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 26.37,
+          "y": 13.23
+        },
+        "tick": 900
+      },
+      "map": "keep",
+      "n": 2,
+      "s": 30,
+      "seed": 7,
+      "way": "steady"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 1.0,
+          "id": 12,
+          "x": 39.0,
+          "y": 17.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "CAPTAIN",
+            "kind": "captain",
+            "men": 1,
+            "squad": 0,
+            "state": "marching north-east",
+            "strength": 500.0,
+            "x": 15.0,
+            "y": 14.0
+          },
+          {
+            "id": "WIL",
+            "kind": "spear",
+            "men": 6,
+            "morale": 0.81,
+            "squad": 1,
+            "state": "marching east",
+            "strength": 120.0,
+            "x": 16.0,
+            "y": 9.0
+          },
+          {
+            "id": "ODA",
+            "kind": "shield",
+            "men": 1,
+            "morale": 0.77,
+            "squad": 2,
+            "state": "marching north",
+            "strength": 30.0,
+            "x": 17.0,
+            "y": 12.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 2,
+            "morale": 0.91,
+            "squad": 3,
+            "state": "marching east",
+            "strength": 25.0,
+            "x": 12.0,
+            "y": 11.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "FELL",
+            "r": 5.0,
+            "type": "hill",
+            "x": 26.0,
+            "y": 5.0
+          },
+          {
+            "name": "DOWNS",
+            "r": 4.0,
+            "type": "hill",
+            "x": 33.0,
+            "y": 16.0
+          },
+          {
+            "name": "COPSE",
+            "type": "wood",
+            "x0": 10,
+            "x1": 18,
+            "y0": 17,
+            "y1": 21
+          },
+          {
+            "name": "HAZELS",
+            "type": "wood",
+            "x0": 27,
+            "x1": 30,
+            "y0": 21,
+            "y1": 26
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "attacking WIL",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 5,
+            "morale": 0.13,
+            "name": "BLIGHT1",
+            "state": "routing",
+            "unit": "blightman",
+            "x": 19.0,
+            "y": 11.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 5,
+            "name": "BLIGHT2",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 25.0,
+            "y": 14.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 7,
+            "name": "BLIGHT3",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 25.0,
+            "y": 14.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 12.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 2,
+            "name": "DRAKES1",
+            "state": "idle",
+            "unit": "drake",
+            "x": 40.0,
+            "y": 21.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES2",
+            "state": "idle",
+            "unit": "drake",
+            "x": 40.0,
+            "y": 26.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "NEST",
+            "site": 0,
+            "type": "keep",
+            "x": 43.0,
+            "y": 13.0
+          },
+          {
+            "holder": "ours",
+            "name": "THORPE",
+            "site": 1,
+            "type": "village",
+            "x": 19.0,
+            "y": 8.0
+          },
+          {
+            "holder": "none",
+            "name": "GRANGE",
+            "site": 2,
+            "type": "village",
+            "x": 16.0,
+            "y": 24.0
+          },
+          {
+            "holder": "ours",
+            "name": "SHRINE",
+            "site": 3,
+            "type": "shrine",
+            "x": 31.0,
+            "y": 15.0
+          },
+          {
+            "holder": "ours",
+            "name": "BEACON",
+            "site": 4,
+            "type": "tower",
+            "x": 34.0,
+            "y": 22.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 15.02,
+          "y": 10.36
+        },
+        "tick": 1500
+      },
+      "map": "keep",
+      "n": 3,
+      "s": 50,
+      "seed": 7,
+      "way": "stubborn"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 1.0,
+          "id": 12,
+          "x": 43.0,
+          "y": 19.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "CAPTAIN",
+            "kind": "captain",
+            "men": 1,
+            "squad": 0,
+            "state": "idle",
+            "strength": 500.0,
+            "x": 19.0,
+            "y": 10.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 1,
+            "squad": 3,
+            "state": "marching east",
+            "strength": 25.0,
+            "x": 21.0,
+            "y": 10.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "FELL",
+            "r": 5.0,
+            "type": "hill",
+            "x": 26.0,
+            "y": 5.0
+          },
+          {
+            "name": "DOWNS",
+            "r": 4.0,
+            "type": "hill",
+            "x": 33.0,
+            "y": 16.0
+          },
+          {
+            "name": "COPSE",
+            "type": "wood",
+            "x0": 10,
+            "x1": 18,
+            "y0": 17,
+            "y1": 21
+          },
+          {
+            "name": "HAZELS",
+            "type": "wood",
+            "x0": 27,
+            "x1": 30,
+            "y0": 21,
+            "y1": 26
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "falling back to (40,0)",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 2,
+            "morale": 0.71,
+            "name": "BLIGHT1",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 39.0,
+            "y": 5.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 12.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 2,
+            "name": "DRAKES1",
+            "state": "idle",
+            "unit": "drake",
+            "x": 40.0,
+            "y": 21.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES2",
+            "state": "idle",
+            "unit": "drake",
+            "x": 40.0,
+            "y": 25.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "NEST",
+            "site": 0,
+            "type": "keep",
+            "x": 43.0,
+            "y": 13.0
+          },
+          {
+            "holder": "ours",
+            "name": "THORPE",
+            "site": 1,
+            "type": "village",
+            "x": 19.0,
+            "y": 8.0
+          },
+          {
+            "holder": "none",
+            "name": "GRANGE",
+            "site": 2,
+            "type": "village",
+            "x": 16.0,
+            "y": 24.0
+          },
+          {
+            "holder": "ours",
+            "name": "SHRINE",
+            "site": 3,
+            "type": "shrine",
+            "x": 31.0,
+            "y": 15.0
+          },
+          {
+            "holder": "ours",
+            "name": "BEACON",
+            "site": 4,
+            "type": "tower",
+            "x": 34.0,
+            "y": 22.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 20.02,
+          "y": 10.01
+        },
+        "tick": 2100
+      },
+      "map": "keep",
+      "n": 4,
+      "s": 70,
+      "seed": 7,
+      "way": "veteran"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 1.0,
+          "id": 12,
+          "x": 43.0,
+          "y": 17.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "CAPTAIN",
+            "kind": "captain",
+            "men": 1,
+            "squad": 0,
+            "state": "marching north-east",
+            "strength": 500.0,
+            "x": 26.0,
+            "y": 14.0
+          },
+          {
+            "id": "WIL",
+            "kind": "spear",
+            "men": 12,
+            "squad": 1,
+            "state": "fighting BLIGHT3",
+            "strength": 240.0,
+            "x": 30.0,
+            "y": 15.0
+          },
+          {
+            "id": "ODA",
+            "kind": "shield",
+            "men": 10,
+            "squad": 2,
+            "state": "fighting BLIGHT3",
+            "strength": 303.0,
+            "x": 29.0,
+            "y": 16.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 10,
+            "squad": 3,
+            "state": "fighting BLIGHT3",
+            "strength": 84.0,
+            "x": 24.0,
+            "y": 16.0
+          },
+          {
+            "id": "BORS",
+            "kind": "horse",
+            "men": 6,
+            "squad": 4,
+            "state": "fighting BLIGHT1",
+            "strength": 194.0,
+            "x": 30.0,
+            "y": 10.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "MOUND",
+            "r": 6.0,
+            "type": "hill",
+            "x": 13.0,
+            "y": 9.0
+          },
+          {
+            "name": "HUMP",
+            "r": 5.0,
+            "type": "hill",
+            "x": 29.0,
+            "y": 22.0
+          },
+          {
+            "name": "BIRCHES",
+            "type": "wood",
+            "x0": 21,
+            "x1": 27,
+            "y0": 7,
+            "y1": 12
+          },
+          {
+            "name": "THICKET",
+            "type": "wood",
+            "x0": 7,
+            "x1": 10,
+            "y0": 1,
+            "y1": 6
+          },
+          {
+            "fords": [
+              9.0,
+              16.0
+            ],
+            "name": "RIVER",
+            "type": "river",
+            "x0": 18,
+            "x1": 22
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "attacking BORS",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT1",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 32.0,
+            "y": 9.0
+          },
+          {
+            "doing": "attacking BORS",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 10,
+            "morale": 0.63,
+            "name": "BLIGHT2",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 31.0,
+            "y": 11.0
+          },
+          {
+            "doing": "attacking WIL",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 8,
+            "morale": 0.32,
+            "name": "BLIGHT3",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 31.0,
+            "y": 14.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 16.0
+          },
+          {
+            "doing": "going to (19,27)",
+            "full": 3,
+            "id": 9,
+            "kind": "trolls",
+            "men": 3,
+            "name": "TROLLS1",
+            "state": "marching",
+            "unit": "troll",
+            "x": 35.0,
+            "y": 18.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES1",
+            "state": "idle",
+            "unit": "drake",
+            "x": 40.0,
+            "y": 25.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES2",
+            "state": "idle",
+            "unit": "drake",
+            "x": 40.0,
+            "y": 26.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "NEST",
+            "site": 0,
+            "type": "keep",
+            "x": 43.0,
+            "y": 17.0
+          },
+          {
+            "holder": "none",
+            "name": "PADDOCK",
+            "site": 1,
+            "type": "village",
+            "x": 16.0,
+            "y": 4.0
+          },
+          {
+            "holder": "none",
+            "name": "ORCHARD",
+            "site": 2,
+            "type": "village",
+            "x": 17.0,
+            "y": 22.0
+          },
+          {
+            "holder": "ours",
+            "name": "CHAPEL",
+            "site": 3,
+            "type": "shrine",
+            "x": 33.0,
+            "y": 8.0
+          },
+          {
+            "holder": "ours",
+            "name": "LOOKOUT",
+            "site": 4,
+            "type": "tower",
+            "x": 39.0,
+            "y": 8.0
+          },
+          {
+            "holder": "none",
+            "name": "FORD",
+            "site": null,
+            "type": "ford",
+            "x": 20.0,
+            "y": 9.0
+          },
+          {
+            "holder": "none",
+            "name": "GRAVEL",
+            "site": null,
+            "type": "ford",
+            "x": 20.0,
+            "y": 16.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 28.89,
+          "y": 14.81
+        },
+        "tick": 600
+      },
+      "map": "keep",
+      "n": 5,
+      "s": 20,
+      "seed": 8,
+      "way": "reckless"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 0.66,
+          "id": 12,
+          "x": 33.0,
+          "y": 18.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "WIL",
+            "kind": "spear",
+            "men": 3,
+            "morale": 0.9,
+            "squad": 1,
+            "state": "fighting DRAKES2",
+            "strength": 60.0,
+            "x": 29.0,
+            "y": 16.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 10,
+            "squad": 3,
+            "state": "fighting DRAKES2",
+            "strength": 84.0,
+            "x": 26.0,
+            "y": 15.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "MOUND",
+            "r": 6.0,
+            "type": "hill",
+            "x": 13.0,
+            "y": 9.0
+          },
+          {
+            "name": "HUMP",
+            "r": 5.0,
+            "type": "hill",
+            "x": 29.0,
+            "y": 22.0
+          },
+          {
+            "name": "BIRCHES",
+            "type": "wood",
+            "x0": 21,
+            "x1": 27,
+            "y0": 7,
+            "y1": 12
+          },
+          {
+            "name": "THICKET",
+            "type": "wood",
+            "x0": 7,
+            "x1": 10,
+            "y0": 1,
+            "y1": 6
+          },
+          {
+            "fords": [
+              9.0,
+              16.0
+            ],
+            "name": "RIVER",
+            "type": "river",
+            "x0": 18,
+            "x1": 22
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "falling back to (41,3)",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 5,
+            "morale": 0.81,
+            "name": "BLIGHT1",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 39.0,
+            "y": 9.0
+          },
+          {
+            "doing": "falling back to LOOKOUT",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 7,
+            "name": "BLIGHT2",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 34.0,
+            "y": 13.0
+          },
+          {
+            "doing": "falling back to (40,12)",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 6,
+            "name": "BLIGHT3",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 33.0,
+            "y": 14.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 16.0
+          },
+          {
+            "doing": "falling back to (39,27)",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 2,
+            "name": "DRAKES2",
+            "state": "marching",
+            "unit": "drake",
+            "x": 32.0,
+            "y": 16.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "NEST",
+            "site": 0,
+            "type": "keep",
+            "x": 43.0,
+            "y": 17.0
+          },
+          {
+            "holder": "none",
+            "name": "PADDOCK",
+            "site": 1,
+            "type": "village",
+            "x": 16.0,
+            "y": 4.0
+          },
+          {
+            "holder": "none",
+            "name": "ORCHARD",
+            "site": 2,
+            "type": "village",
+            "x": 17.0,
+            "y": 22.0
+          },
+          {
+            "holder": "ours",
+            "name": "CHAPEL",
+            "site": 3,
+            "type": "shrine",
+            "x": 33.0,
+            "y": 8.0
+          },
+          {
+            "holder": "ours",
+            "name": "LOOKOUT",
+            "site": 4,
+            "type": "tower",
+            "x": 39.0,
+            "y": 8.0
+          },
+          {
+            "holder": "none",
+            "name": "FORD",
+            "site": null,
+            "type": "ford",
+            "x": 20.0,
+            "y": 9.0
+          },
+          {
+            "holder": "none",
+            "name": "GRAVEL",
+            "site": null,
+            "type": "ford",
+            "x": 20.0,
+            "y": 16.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 27.34,
+          "y": 15.0
+        },
+        "tick": 1350
+      },
+      "map": "keep",
+      "n": 6,
+      "s": 45,
+      "seed": 8,
+      "way": "steady"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 1.0,
+          "id": 12,
+          "x": 42.0,
+          "y": 20.0
+        },
+        "facing": "west",
+        "foesSeen": [],
+        "ground": [
+          {
+            "name": "HUMP",
+            "r": 5.0,
+            "type": "hill",
+            "x": 18.0,
+            "y": 9.0
+          },
+          {
+            "name": "MOUND",
+            "r": 5.0,
+            "type": "hill",
+            "x": 32.0,
+            "y": 21.0
+          },
+          {
+            "name": "ELMWOOD",
+            "type": "wood",
+            "x0": 14,
+            "x1": 19,
+            "y0": 15,
+            "y1": 21
+          },
+          {
+            "name": "ASHWOOD",
+            "type": "wood",
+            "x0": 7,
+            "x1": 12,
+            "y0": 2,
+            "y1": 6
+          },
+          {
+            "name": "OAKWOOD",
+            "type": "wood",
+            "x0": 16,
+            "x1": 22,
+            "y0": 7,
+            "y1": 11
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "taking BARN",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT1",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 38.0,
+            "y": 7.0
+          },
+          {
+            "doing": "going to BARN",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT2",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 38.0,
+            "y": 10.0
+          },
+          {
+            "doing": "going to BARN",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT3",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 37.0,
+            "y": 16.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 18.0
+          },
+          {
+            "doing": "going to (19,27)",
+            "full": 3,
+            "id": 9,
+            "kind": "trolls",
+            "men": 3,
+            "name": "TROLLS1",
+            "state": "marching",
+            "unit": "troll",
+            "x": 36.0,
+            "y": 23.0
+          },
+          {
+            "doing": "holding",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES1",
+            "state": "idle",
+            "unit": "drake",
+            "x": 39.0,
+            "y": 26.0
+          },
+          {
+            "doing": "falling back to (38,27)",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES2",
+            "state": "marching",
+            "unit": "drake",
+            "x": 38.0,
+            "y": 27.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "TOWN",
+            "site": 0,
+            "type": "town",
+            "x": 43.0,
+            "y": 19.0
+          },
+          {
+            "holder": "none",
+            "name": "FOLD",
+            "site": 1,
+            "type": "village",
+            "x": 15.0,
+            "y": 7.0
+          },
+          {
+            "holder": "none",
+            "name": "BARN",
+            "site": 2,
+            "type": "village",
+            "x": 17.0,
+            "y": 24.0
+          },
+          {
+            "holder": "ours",
+            "name": "CAIRN",
+            "site": 3,
+            "type": "shrine",
+            "x": 29.0,
+            "y": 16.0
+          },
+          {
+            "holder": "ours",
+            "name": "LOOKOUT",
+            "site": 4,
+            "type": "tower",
+            "x": 36.0,
+            "y": 6.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 4.0,
+          "y": 13.5
+        },
+        "tick": 450
+      },
+      "map": "town",
+      "n": 7,
+      "s": 15,
+      "seed": 6,
+      "way": "stubborn"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 0.59,
+          "id": 12,
+          "x": 31.0,
+          "y": 22.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "CAPTAIN",
+            "kind": "captain",
+            "men": 1,
+            "squad": 0,
+            "state": "marching south",
+            "strength": 500.0,
+            "x": 27.0,
+            "y": 15.0
+          },
+          {
+            "id": "ODA",
+            "kind": "shield",
+            "men": 1,
+            "morale": 0.38,
+            "squad": 2,
+            "state": "fighting BLIGHT3",
+            "strength": 30.0,
+            "x": 30.0,
+            "y": 23.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 8,
+            "squad": 3,
+            "state": "fighting BLIGHT2",
+            "strength": 67.0,
+            "x": 23.0,
+            "y": 19.0
+          },
+          {
+            "id": "BORS",
+            "kind": "horse",
+            "men": 1,
+            "morale": 0.92,
+            "squad": 4,
+            "state": "marching east",
+            "strength": 65.0,
+            "x": 20.0,
+            "y": 16.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "HUMP",
+            "r": 5.0,
+            "type": "hill",
+            "x": 18.0,
+            "y": 9.0
+          },
+          {
+            "name": "MOUND",
+            "r": 5.0,
+            "type": "hill",
+            "x": 32.0,
+            "y": 21.0
+          },
+          {
+            "name": "ELMWOOD",
+            "type": "wood",
+            "x0": 14,
+            "x1": 19,
+            "y0": 15,
+            "y1": 21
+          },
+          {
+            "name": "ASHWOOD",
+            "type": "wood",
+            "x0": 7,
+            "x1": 12,
+            "y0": 2,
+            "y1": 6
+          },
+          {
+            "name": "OAKWOOD",
+            "type": "wood",
+            "x0": 16,
+            "x1": 22,
+            "y0": 7,
+            "y1": 11
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "attacking REN",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 5,
+            "morale": 0.0,
+            "name": "BLIGHT1",
+            "state": "routing",
+            "unit": "blightman",
+            "x": 32.0,
+            "y": 18.0
+          },
+          {
+            "doing": "attacking CAPTAIN",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 7,
+            "morale": 0.53,
+            "name": "BLIGHT2",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 28.0,
+            "y": 15.0
+          },
+          {
+            "doing": "attacking CAPTAIN",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 3,
+            "morale": 0.8,
+            "name": "BLIGHT3",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 31.0,
+            "y": 23.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 18.0
+          },
+          {
+            "doing": "attacking REN",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES2",
+            "state": "marching",
+            "unit": "drake",
+            "x": 39.0,
+            "y": 27.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "TOWN",
+            "site": 0,
+            "type": "town",
+            "x": 43.0,
+            "y": 19.0
+          },
+          {
+            "holder": "none",
+            "name": "FOLD",
+            "site": 1,
+            "type": "village",
+            "x": 15.0,
+            "y": 7.0
+          },
+          {
+            "holder": "none",
+            "name": "BARN",
+            "site": 2,
+            "type": "village",
+            "x": 17.0,
+            "y": 24.0
+          },
+          {
+            "holder": "ours",
+            "name": "CAIRN",
+            "site": 3,
+            "type": "shrine",
+            "x": 29.0,
+            "y": 16.0
+          },
+          {
+            "holder": "ours",
+            "name": "LOOKOUT",
+            "site": 4,
+            "type": "tower",
+            "x": 36.0,
+            "y": 6.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 24.37,
+          "y": 18.94
+        },
+        "tick": 1200
+      },
+      "map": "town",
+      "n": 8,
+      "s": 40,
+      "seed": 6,
+      "way": "veteran"
+    },
+    {
+      "field": {
+        "armyLeft": "south-west",
+        "captain": {
+          "hp": 0.58,
+          "id": 12,
+          "x": 44.0,
+          "y": 24.0
+        },
+        "facing": "north-west",
+        "foesSeen": [
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 2,
+            "squad": 3,
+            "state": "marching east",
+            "strength": 67.0,
+            "x": 27.0,
+            "y": 19.0
+          },
+          {
+            "id": "BORS",
+            "kind": "horse",
+            "men": 1,
+            "morale": 0.67,
+            "squad": 4,
+            "state": "marching east",
+            "strength": 32.0,
+            "x": 32.0,
+            "y": 15.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "HUMP",
+            "r": 5.0,
+            "type": "hill",
+            "x": 18.0,
+            "y": 9.0
+          },
+          {
+            "name": "MOUND",
+            "r": 5.0,
+            "type": "hill",
+            "x": 32.0,
+            "y": 21.0
+          },
+          {
+            "name": "ELMWOOD",
+            "type": "wood",
+            "x0": 14,
+            "x1": 19,
+            "y0": 15,
+            "y1": 21
+          },
+          {
+            "name": "ASHWOOD",
+            "type": "wood",
+            "x0": 7,
+            "x1": 12,
+            "y0": 2,
+            "y1": 6
+          },
+          {
+            "name": "OAKWOOD",
+            "type": "wood",
+            "x0": 16,
+            "x1": 22,
+            "y0": 7,
+            "y1": 11
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 18.0
+          },
+          {
+            "doing": "attacking REN",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES2",
+            "state": "marching",
+            "unit": "drake",
+            "x": 39.0,
+            "y": 27.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "TOWN",
+            "site": 0,
+            "type": "town",
+            "x": 43.0,
+            "y": 19.0
+          },
+          {
+            "holder": "none",
+            "name": "FOLD",
+            "site": 1,
+            "type": "village",
+            "x": 15.0,
+            "y": 7.0
+          },
+          {
+            "holder": "none",
+            "name": "BARN",
+            "site": 2,
+            "type": "village",
+            "x": 17.0,
+            "y": 24.0
+          },
+          {
+            "holder": "ours",
+            "name": "CAIRN",
+            "site": 3,
+            "type": "shrine",
+            "x": 29.0,
+            "y": 16.0
+          },
+          {
+            "holder": "ours",
+            "name": "LOOKOUT",
+            "site": 4,
+            "type": "tower",
+            "x": 36.0,
+            "y": 6.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 28.83,
+          "y": 17.3
+        },
+        "tick": 1950
+      },
+      "map": "town",
+      "n": 9,
+      "s": 65,
+      "seed": 6,
+      "way": "reckless"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 1.0,
+          "id": 5,
+          "x": 42.0,
+          "y": 13.0
+        },
+        "facing": "west",
+        "foesSeen": [],
+        "ground": [
+          {
+            "name": "HUMP",
+            "r": 4.0,
+            "type": "hill",
+            "x": 18.0,
+            "y": 20.0
+          },
+          {
+            "name": "MOUND",
+            "r": 4.0,
+            "type": "hill",
+            "x": 30.0,
+            "y": 20.0
+          },
+          {
+            "name": "ELMWOOD",
+            "type": "wood",
+            "x0": 10,
+            "x1": 19,
+            "y0": 8,
+            "y1": 14
+          },
+          {
+            "name": "ASHWOOD",
+            "type": "wood",
+            "x0": 28,
+            "x1": 37,
+            "y0": 8,
+            "y1": 14
+          },
+          {
+            "name": "OAKWOOD",
+            "type": "wood",
+            "x0": 21,
+            "x1": 26,
+            "y0": 21,
+            "y1": 25
+          },
+          {
+            "name": "BIRCHES",
+            "type": "wood",
+            "x0": 14,
+            "x1": 21,
+            "y0": 3,
+            "y1": 5
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "going to (25,7)",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT1",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 32.0,
+            "y": 8.0
+          },
+          {
+            "doing": "going to (26,11)",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT2",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 32.0,
+            "y": 12.0
+          },
+          {
+            "doing": "going to (24,3)",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT3",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 31.0,
+            "y": 4.0
+          },
+          {
+            "doing": "falling back to (32,8)",
+            "full": 3,
+            "id": 9,
+            "kind": "trolls",
+            "men": 3,
+            "name": "TROLLS1",
+            "state": "marching",
+            "unit": "troll",
+            "x": 37.0,
+            "y": 12.0
+          },
+          {
+            "doing": "going to (24,0)",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES1",
+            "state": "marching",
+            "unit": "drake",
+            "x": 33.0,
+            "y": 4.0
+          }
+        ],
+        "places": [],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 6.0,
+          "y": 13.5
+        },
+        "tick": 240
+      },
+      "map": "field",
+      "n": 10,
+      "s": 8,
+      "seed": 6,
+      "way": "steady"
+    },
+    {
+      "field": {
+        "armyLeft": "south-east",
+        "captain": {
+          "hp": 1.0,
+          "id": 5,
+          "x": 25.0,
+          "y": 9.0
+        },
+        "facing": "south-west",
+        "foesSeen": [
+          {
+            "id": "CAPTAIN",
+            "kind": "captain",
+            "men": 1,
+            "squad": 0,
+            "state": "fighting BLIGHT3",
+            "strength": 500.0,
+            "x": 23.0,
+            "y": 13.0
+          },
+          {
+            "id": "WIL",
+            "kind": "spear",
+            "men": 6,
+            "morale": 0.0,
+            "squad": 1,
+            "state": "routing",
+            "strength": 120.0,
+            "x": 19.0,
+            "y": 12.0
+          },
+          {
+            "id": "ODA",
+            "kind": "shield",
+            "men": 8,
+            "morale": 0.71,
+            "squad": 2,
+            "state": "fighting BLIGHT1",
+            "strength": 242.0,
+            "x": 26.0,
+            "y": 12.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 10,
+            "squad": 3,
+            "state": "fighting BLIGHT3",
+            "strength": 84.0,
+            "x": 21.0,
+            "y": 13.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "HUMP",
+            "r": 4.0,
+            "type": "hill",
+            "x": 18.0,
+            "y": 20.0
+          },
+          {
+            "name": "MOUND",
+            "r": 4.0,
+            "type": "hill",
+            "x": 30.0,
+            "y": 20.0
+          },
+          {
+            "name": "ELMWOOD",
+            "type": "wood",
+            "x0": 10,
+            "x1": 19,
+            "y0": 8,
+            "y1": 14
+          },
+          {
+            "name": "ASHWOOD",
+            "type": "wood",
+            "x0": 28,
+            "x1": 37,
+            "y0": 8,
+            "y1": 14
+          },
+          {
+            "name": "OAKWOOD",
+            "type": "wood",
+            "x0": 21,
+            "x1": 26,
+            "y0": 21,
+            "y1": 25
+          },
+          {
+            "name": "BIRCHES",
+            "type": "wood",
+            "x0": 14,
+            "x1": 21,
+            "y0": 3,
+            "y1": 5
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "attacking ODA",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT1",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 29.0,
+            "y": 9.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 6,
+            "morale": 0.08,
+            "name": "BLIGHT2",
+            "state": "routing",
+            "unit": "blightman",
+            "x": 31.0,
+            "y": 12.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 9,
+            "morale": 0.83,
+            "name": "BLIGHT3",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 25.0,
+            "y": 10.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 3,
+            "id": 9,
+            "kind": "trolls",
+            "men": 3,
+            "name": "TROLLS1",
+            "state": "marching",
+            "unit": "troll",
+            "x": 31.0,
+            "y": 6.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 1,
+            "morale": 0.15,
+            "name": "DRAKES1",
+            "state": "routing",
+            "unit": "drake",
+            "x": 27.0,
+            "y": 10.0
+          }
+        ],
+        "places": [],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 23.08,
+          "y": 12.21
+        },
+        "tick": 660
+      },
+      "map": "field",
+      "n": 11,
+      "s": 22,
+      "seed": 6,
+      "way": "stubborn"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 0.38,
+          "id": 5,
+          "x": 33.0,
+          "y": 8.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "CAPTAIN",
+            "kind": "captain",
+            "men": 1,
+            "squad": 0,
+            "state": "marching west",
+            "strength": 500.0,
+            "x": 21.0,
+            "y": 16.0
+          },
+          {
+            "id": "WIL",
+            "kind": "spear",
+            "men": 1,
+            "morale": 0.74,
+            "squad": 1,
+            "state": "marching east",
+            "strength": 120.0,
+            "x": 18.0,
+            "y": 12.0
+          },
+          {
+            "id": "ODA",
+            "kind": "shield",
+            "men": 1,
+            "morale": 0.43,
+            "squad": 2,
+            "state": "fighting BLIGHT1",
+            "strength": 30.0,
+            "x": 26.0,
+            "y": 13.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 10,
+            "squad": 3,
+            "state": "fighting BLIGHT1",
+            "strength": 84.0,
+            "x": 21.0,
+            "y": 13.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "HUMP",
+            "r": 4.0,
+            "type": "hill",
+            "x": 18.0,
+            "y": 20.0
+          },
+          {
+            "name": "MOUND",
+            "r": 4.0,
+            "type": "hill",
+            "x": 30.0,
+            "y": 20.0
+          },
+          {
+            "name": "ELMWOOD",
+            "type": "wood",
+            "x0": 10,
+            "x1": 19,
+            "y0": 8,
+            "y1": 14
+          },
+          {
+            "name": "ASHWOOD",
+            "type": "wood",
+            "x0": 28,
+            "x1": 37,
+            "y0": 8,
+            "y1": 14
+          },
+          {
+            "name": "OAKWOOD",
+            "type": "wood",
+            "x0": 21,
+            "x1": 26,
+            "y0": 21,
+            "y1": 25
+          },
+          {
+            "name": "BIRCHES",
+            "type": "wood",
+            "x0": 14,
+            "x1": 21,
+            "y0": 3,
+            "y1": 5
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "attacking ODA",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 8,
+            "morale": 0.84,
+            "name": "BLIGHT1",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 26.0,
+            "y": 12.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 6,
+            "morale": 0.79,
+            "name": "BLIGHT2",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 35.0,
+            "y": 13.0
+          },
+          {
+            "doing": "going to (26,13)",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 3,
+            "morale": 0.52,
+            "name": "BLIGHT3",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 39.0,
+            "y": 13.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 3,
+            "id": 9,
+            "kind": "trolls",
+            "men": 2,
+            "morale": 0.78,
+            "name": "TROLLS1",
+            "state": "marching",
+            "unit": "troll",
+            "x": 30.0,
+            "y": 9.0
+          },
+          {
+            "doing": "attacking REN",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 1,
+            "morale": 0.75,
+            "name": "DRAKES1",
+            "state": "marching",
+            "unit": "drake",
+            "x": 36.0,
+            "y": 15.0
+          }
+        ],
+        "places": [],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 21.51,
+          "y": 13.41
+        },
+        "tick": 1080
+      },
+      "map": "field",
+      "n": 12,
+      "s": 36,
+      "seed": 6,
+      "way": "veteran"
+    },
+    {
+      "field": {
+        "armyLeft": "south-east",
+        "captain": {
+          "hp": 1.0,
+          "id": 5,
+          "x": 43.0,
+          "y": 8.0
+        },
+        "facing": "south-west",
+        "foesSeen": [
+          {
+            "id": "WIL",
+            "kind": "spear",
+            "men": 12,
+            "squad": 1,
+            "state": "fighting BLIGHT2",
+            "strength": 240.0,
+            "x": 23.0,
+            "y": 13.0
+          },
+          {
+            "id": "ODA",
+            "kind": "shield",
+            "men": 9,
+            "squad": 2,
+            "state": "marching north-east",
+            "strength": 303.0,
+            "x": 22.0,
+            "y": 16.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 2,
+            "squad": 3,
+            "state": "idle",
+            "strength": 84.0,
+            "x": 18.0,
+            "y": 15.0
+          },
+          {
+            "id": "BORS",
+            "kind": "horse",
+            "men": 6,
+            "squad": 4,
+            "state": "fighting BLIGHT3",
+            "strength": 194.0,
+            "x": 23.0,
+            "y": 6.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "FELL",
+            "r": 5.0,
+            "type": "hill",
+            "x": 15.0,
+            "y": 7.0
+          },
+          {
+            "name": "DOWNS",
+            "r": 5.0,
+            "type": "hill",
+            "x": 33.0,
+            "y": 7.0
+          },
+          {
+            "name": "THICKET",
+            "type": "wood",
+            "x0": 14,
+            "x1": 33,
+            "y0": 3,
+            "y1": 7
+          },
+          {
+            "name": "BIRCHES",
+            "type": "wood",
+            "x0": 8,
+            "x1": 13,
+            "y0": 7,
+            "y1": 10
+          },
+          {
+            "name": "GROVE",
+            "type": "wood",
+            "x0": 34,
+            "x1": 39,
+            "y0": 7,
+            "y1": 10
+          },
+          {
+            "name": "HAZELS",
+            "type": "wood",
+            "x0": 8,
+            "x1": 11,
+            "y0": 2,
+            "y1": 4
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "attacking BORS",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT1",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 30.0,
+            "y": 7.0
+          },
+          {
+            "doing": "attacking WIL",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT2",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 26.0,
+            "y": 11.0
+          },
+          {
+            "doing": "attacking BORS",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT3",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 25.0,
+            "y": 3.0
+          },
+          {
+            "doing": "falling back to (31,0)",
+            "full": 3,
+            "id": 9,
+            "kind": "trolls",
+            "men": 3,
+            "name": "TROLLS1",
+            "state": "marching",
+            "unit": "troll",
+            "x": 37.0,
+            "y": 11.0
+          },
+          {
+            "doing": "attacking WIL",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES1",
+            "state": "marching",
+            "unit": "drake",
+            "x": 24.0,
+            "y": 2.0
+          }
+        ],
+        "places": [],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 22.64,
+          "y": 11.56
+        },
+        "tick": 360
+      },
+      "map": "field",
+      "n": 13,
+      "s": 12,
+      "seed": 7,
+      "way": "reckless"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 0.82,
+          "id": 5,
+          "x": 30.0,
+          "y": 10.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 10,
+            "morale": 0.85,
+            "squad": 3,
+            "state": "fighting DRAKES1",
+            "strength": 84.0,
+            "x": 23.0,
+            "y": 14.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "FELL",
+            "r": 5.0,
+            "type": "hill",
+            "x": 15.0,
+            "y": 7.0
+          },
+          {
+            "name": "DOWNS",
+            "r": 5.0,
+            "type": "hill",
+            "x": 33.0,
+            "y": 7.0
+          },
+          {
+            "name": "THICKET",
+            "type": "wood",
+            "x0": 14,
+            "x1": 33,
+            "y0": 3,
+            "y1": 7
+          },
+          {
+            "name": "BIRCHES",
+            "type": "wood",
+            "x0": 8,
+            "x1": 13,
+            "y0": 7,
+            "y1": 10
+          },
+          {
+            "name": "GROVE",
+            "type": "wood",
+            "x0": 34,
+            "x1": 39,
+            "y0": 7,
+            "y1": 10
+          },
+          {
+            "name": "HAZELS",
+            "type": "wood",
+            "x0": 8,
+            "x1": 11,
+            "y0": 2,
+            "y1": 4
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "attacking ODA",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 6,
+            "morale": 0.14,
+            "name": "BLIGHT1",
+            "state": "routing",
+            "unit": "blightman",
+            "x": 39.0,
+            "y": 16.0
+          },
+          {
+            "doing": "going to (23,14)",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 4,
+            "morale": 0.7,
+            "name": "BLIGHT2",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 38.0,
+            "y": 15.0
+          },
+          {
+            "doing": "attacking CAPTAIN",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 5,
+            "morale": 0.17,
+            "name": "BLIGHT3",
+            "state": "routing",
+            "unit": "blightman",
+            "x": 30.0,
+            "y": 12.0
+          },
+          {
+            "doing": "attacking REN",
+            "full": 3,
+            "id": 9,
+            "kind": "trolls",
+            "men": 3,
+            "name": "TROLLS1",
+            "state": "marching",
+            "unit": "troll",
+            "x": 27.0,
+            "y": 12.0
+          },
+          {
+            "doing": "attacking REN",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 1,
+            "morale": 0.28,
+            "name": "DRAKES1",
+            "state": "fighting",
+            "unit": "drake",
+            "x": 24.0,
+            "y": 11.0
+          }
+        ],
+        "places": [],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 23.43,
+          "y": 13.6
+        },
+        "tick": 900
+      },
+      "map": "field",
+      "n": 14,
+      "s": 30,
+      "seed": 7,
+      "way": "steady"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 1.0,
+          "id": 12,
+          "x": 41.0,
+          "y": 15.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "CAPTAIN",
+            "kind": "captain",
+            "men": 1,
+            "squad": 0,
+            "state": "fighting DRAKES1",
+            "strength": 500.0,
+            "x": 31.0,
+            "y": 19.0
+          },
+          {
+            "id": "WIL",
+            "kind": "spear",
+            "men": 11,
+            "morale": 0.87,
+            "squad": 1,
+            "state": "fighting BLIGHT2",
+            "strength": 220.0,
+            "x": 28.0,
+            "y": 10.0
+          },
+          {
+            "id": "ODA",
+            "kind": "shield",
+            "men": 6,
+            "morale": 0.56,
+            "squad": 2,
+            "state": "fighting DRAKES1",
+            "strength": 182.0,
+            "x": 31.0,
+            "y": 16.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 9,
+            "squad": 3,
+            "state": "fighting BLIGHT2",
+            "strength": 84.0,
+            "x": 24.0,
+            "y": 15.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "FELL",
+            "r": 5.0,
+            "type": "hill",
+            "x": 26.0,
+            "y": 5.0
+          },
+          {
+            "name": "DOWNS",
+            "r": 4.0,
+            "type": "hill",
+            "x": 33.0,
+            "y": 16.0
+          },
+          {
+            "name": "COPSE",
+            "type": "wood",
+            "x0": 10,
+            "x1": 18,
+            "y0": 17,
+            "y1": 21
+          },
+          {
+            "name": "HAZELS",
+            "type": "wood",
+            "x0": 27,
+            "x1": 30,
+            "y0": 21,
+            "y1": 26
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "taking THORPE",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT1",
+            "state": "marching",
+            "unit": "blightman",
+            "x": 29.0,
+            "y": 5.0
+          },
+          {
+            "doing": "attacking WIL",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 10,
+            "morale": 0.69,
+            "name": "BLIGHT2",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 28.0,
+            "y": 9.0
+          },
+          {
+            "doing": "attacking BORS",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 7,
+            "morale": 0.07,
+            "name": "BLIGHT3",
+            "state": "routing",
+            "unit": "blightman",
+            "x": 36.0,
+            "y": 10.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 13.0
+          },
+          {
+            "doing": "attacking CAPTAIN",
+            "full": 3,
+            "id": 9,
+            "kind": "trolls",
+            "men": 1,
+            "morale": 0.18,
+            "name": "TROLLS1",
+            "state": "routing",
+            "unit": "troll",
+            "x": 31.0,
+            "y": 18.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 3,
+            "id": 10,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES1",
+            "state": "fighting",
+            "unit": "drake",
+            "x": 33.0,
+            "y": 17.0
+          },
+          {
+            "doing": "attacking ODA",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 3,
+            "name": "DRAKES2",
+            "state": "fighting",
+            "unit": "drake",
+            "x": 33.0,
+            "y": 19.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "TOWN",
+            "site": 0,
+            "type": "town",
+            "x": 43.0,
+            "y": 13.0
+          },
+          {
+            "holder": "none",
+            "name": "THORPE",
+            "site": 1,
+            "type": "village",
+            "x": 19.0,
+            "y": 8.0
+          },
+          {
+            "holder": "none",
+            "name": "GRANGE",
+            "site": 2,
+            "type": "village",
+            "x": 16.0,
+            "y": 24.0
+          },
+          {
+            "holder": "ours",
+            "name": "SHRINE",
+            "site": 3,
+            "type": "shrine",
+            "x": 31.0,
+            "y": 15.0
+          },
+          {
+            "holder": "ours",
+            "name": "BEACON",
+            "site": 4,
+            "type": "tower",
+            "x": 34.0,
+            "y": 22.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 28.48,
+          "y": 13.11
+        },
+        "tick": 750
+      },
+      "map": "town",
+      "n": 15,
+      "s": 25,
+      "seed": 7,
+      "way": "stubborn"
+    },
+    {
+      "field": {
+        "armyLeft": "south",
+        "captain": {
+          "hp": 1.0,
+          "id": 12,
+          "x": 32.0,
+          "y": 13.0
+        },
+        "facing": "west",
+        "foesSeen": [
+          {
+            "id": "WIL",
+            "kind": "spear",
+            "men": 1,
+            "squad": 1,
+            "state": "marching south-east",
+            "strength": 20.0,
+            "x": 21.0,
+            "y": 12.0
+          },
+          {
+            "id": "REN",
+            "kind": "archer",
+            "men": 10,
+            "squad": 3,
+            "state": "fighting BLIGHT2",
+            "strength": 84.0,
+            "x": 23.0,
+            "y": 14.0
+          }
+        ],
+        "ground": [
+          {
+            "name": "FELL",
+            "r": 5.0,
+            "type": "hill",
+            "x": 26.0,
+            "y": 5.0
+          },
+          {
+            "name": "DOWNS",
+            "r": 4.0,
+            "type": "hill",
+            "x": 33.0,
+            "y": 16.0
+          },
+          {
+            "name": "COPSE",
+            "type": "wood",
+            "x0": 10,
+            "x1": 18,
+            "y0": 17,
+            "y1": 21
+          },
+          {
+            "name": "HAZELS",
+            "type": "wood",
+            "x0": 27,
+            "x1": 30,
+            "y0": 21,
+            "y1": 26
+          }
+        ],
+        "night": false,
+        "ours": [
+          {
+            "doing": "attacking WIL",
+            "full": 12,
+            "id": 5,
+            "kind": "blight-men",
+            "men": 7,
+            "morale": 0.2,
+            "name": "BLIGHT1",
+            "state": "routing",
+            "unit": "blightman",
+            "x": 31.0,
+            "y": 10.0
+          },
+          {
+            "doing": "attacking REN",
+            "full": 12,
+            "id": 6,
+            "kind": "blight-men",
+            "men": 1,
+            "morale": 0.35,
+            "name": "BLIGHT2",
+            "state": "fighting",
+            "unit": "blightman",
+            "x": 24.0,
+            "y": 16.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 7,
+            "kind": "blight-men",
+            "men": 2,
+            "morale": 0.17,
+            "name": "BLIGHT3",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 30.0,
+            "y": 14.0
+          },
+          {
+            "doing": "holding",
+            "full": 12,
+            "id": 8,
+            "kind": "blight-men",
+            "men": 12,
+            "name": "BLIGHT4",
+            "state": "idle",
+            "unit": "blightman",
+            "x": 42.0,
+            "y": 12.0
+          },
+          {
+            "doing": "attacking REN",
+            "full": 3,
+            "id": 11,
+            "kind": "drakes",
+            "men": 1,
+            "morale": 0.73,
+            "name": "DRAKES2",
+            "state": "marching",
+            "unit": "drake",
+            "x": 29.0,
+            "y": 15.0
+          }
+        ],
+        "places": [
+          {
+            "holder": "ours",
+            "name": "TOWN",
+            "site": 0,
+            "type": "town",
+            "x": 43.0,
+            "y": 13.0
+          },
+          {
+            "holder": "none",
+            "name": "THORPE",
+            "site": 1,
+            "type": "village",
+            "x": 19.0,
+            "y": 8.0
+          },
+          {
+            "holder": "none",
+            "name": "GRANGE",
+            "site": 2,
+            "type": "village",
+            "x": 16.0,
+            "y": 24.0
+          },
+          {
+            "holder": "ours",
+            "name": "SHRINE",
+            "site": 3,
+            "type": "shrine",
+            "x": 31.0,
+            "y": 15.0
+          },
+          {
+            "holder": "ours",
+            "name": "BEACON",
+            "site": 4,
+            "type": "tower",
+            "x": 34.0,
+            "y": 22.0
+          }
+        ],
+        "size": {
+          "h": 27,
+          "w": 48
+        },
+        "threatPoint": {
+          "x": 22.91,
+          "y": 14.08
+        },
+        "tick": 1500
+      },
+      "map": "town",
+      "n": 16,
+      "s": 50,
+      "seed": 7,
+      "way": "veteran"
+    }
+  ]
+}

@@ -37,6 +37,8 @@ export interface FieldFoe {
   morale?: number;
   /** Men × worth left, for "the weakest" and "their strongest"; absent means men. */
   strength?: number;
+  /** The sim's squad id, when `id` is not `E<squad>` (the broodlord's field names the warband's companies). */
+  squad?: number;
 }
 
 export interface FieldPlace {

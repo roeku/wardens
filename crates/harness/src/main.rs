@@ -2,7 +2,9 @@
 //! `out/sessions/<name>.json` and re-simulated on every call, so an agent can play and check the game
 //! without a browser.
 
+mod campaign;
 mod draw;
+mod intents;
 mod sweep;
 
 use std::fs;
@@ -46,6 +48,32 @@ enum Cmd {
     Places {
         /// Only checks whose name contains this.
         filter: Option<String>,
+    },
+    /// Run the broodlord's intent checks (06-voice §8): the bots carry out the brain's intents, across seeds.
+    Intents {
+        /// Only checks whose name contains this.
+        filter: Option<String>,
+    },
+    /// Whole campaigns headless (01-flow §4, §8): `campaign <n> [--seed0 S] [--bot commander|leader|charge|idle]`, seeds on
+    /// threads, printing won/lost and why, steps, battles, men lost, commanders fallen and returned, villages freed
+    /// and burnt, broodlords down and escaped, and sim and wall time. `--checks` runs the campaign's checks;
+    /// `--state` prints a seed's campaign state (contract §3) at the muster. PROTO_TUNE, if set, overrides the
+    /// tuning.
+    Campaign {
+        n: u32,
+        #[arg(long, default_value_t = 1)]
+        seed0: u32,
+        #[arg(long, default_value = "commander")]
+        bot: String,
+        /// One row per campaign.
+        #[arg(long)]
+        verbose: bool,
+        /// Run the campaign's checks over the n seeds instead.
+        #[arg(long)]
+        checks: bool,
+        /// Print the state of campaign `seed0` at the muster and after the debug muster, and exit.
+        #[arg(long)]
+        state: bool,
     },
     /// Print a replay file's map hash and state hashes every N ticks.
     Hashes {
@@ -142,6 +170,25 @@ fn run(cli: Cli) -> Result<(), String> {
             Ok(())
         }
         Cmd::Play { session, act } => play(&session, act),
+        Cmd::Intents { filter } => intents::run(filter),
+        Cmd::Campaign { n, seed0, bot, verbose, checks, state } => {
+            let tune = match std::env::var("PROTO_TUNE") {
+                Ok(over) => Tune::with_override(&serde_json::from_str(&over).map_err(|e| format!("PROTO_TUNE: {e}"))?)?,
+                Err(_) => Tune::default(),
+            };
+            let bot = sim::campaign::auto::Policy::parse(&bot)?;
+            if state {
+                let mut c = sim::campaign::Campaign::create(seed0, &sim::campaign::Opts::default(), tune);
+                println!("{}", serde_json::to_string_pretty(&c.state()).map_err(|e| e.to_string())?);
+                c.auto_muster()?;
+                println!("{}", serde_json::to_string_pretty(&c.state()["warband"]).map_err(|e| e.to_string())?);
+                return Ok(());
+            }
+            if checks {
+                return campaign::checks(n, seed0, bot, &tune);
+            }
+            campaign::run(&campaign::Opts2 { n, seed0, bot, tune, verbose })
+        }
         Cmd::Orders { filter } => {
             let mut failed = 0;
             let mut ran = 0;
@@ -179,6 +226,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 MapKind::Field => "general1".into(),
                 MapKind::Ford => "raiders".into(),
                 MapKind::Keep | MapKind::Town => "garrison".into(),
+                MapKind::Road => "idle".into(),
             });
             let tune = match std::env::var("PROTO_TUNE") {
                 Ok(over) => Tune::with_override(&serde_json::from_str(&over).map_err(|e| format!("PROTO_TUNE: {e}"))?)?,

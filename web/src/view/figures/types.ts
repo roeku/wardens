@@ -24,6 +24,11 @@ export interface ManRecord {
   rank: number;
   /** Soldier 0 of a company: drawn ×1.16. */
   commander: boolean;
+  /**
+   * A commander's face seed (contract campaign §3 `face`; battle/faces.ts fills it per company): his looks come
+   * from it, not from the soldier id, so he is the same man in every battle and on his portrait. 0 or absent: by id.
+   */
+  faceSeed?: number;
   /** The warband's captain: mounted on the general's charger. */
   captain: boolean;
   routing: boolean;

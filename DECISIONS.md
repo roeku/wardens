@@ -2161,3 +2161,982 @@ Groups are kept from each resolution and forgotten when all their companies are 
 **Decision:** voice binds `onCaptainHold((phase) => …)` from `web/src/input/hooks.ts` ('start' begins listening,
 'end' releases), and V itself.
 **Spec:** 01-flow §2; 06-voice §3.
+
+## D-21 | 2026-10-29 | Day 5: the campaign rules, the road and custom battles (01-flow §3–§5; 03-land §9; 04-battle §7–§8)
+**Summary:**
+- **The campaign in the sim** (`crates/sim/src/campaign/`): the road (rows, lanes L±1, the place-kind roll), the muster (bands and commanders, plant, stand down, swap), garrisons mapped onto the blight, nine broodlords who escape and return a rank harder, `finish()` (losses, joiners, ranks, the freed, heirs, the wounded who return, villages burning on the road), camp, the end, the chronicle and the Hall. Saves are versioned JSON.
+- **The road map** (`MapKind::Road`, 03-land §9) and `road_battle()`, a peaceful battle drawn by the same view.
+- **`Battle.custom`** for the war table. **`face`** on every company and squad (not hashed), in `squads_json`.
+- **WASM** `Campaign` (contract: `docs/engine/contracts/campaign.md`). **Harness** `campaign <n> [--bot] [--checks]`.
+- **A spec change:** the garrison factor is **0.9, not 0.6**. At 0.6 the sensible bot won 74.5% of campaigns (band 30–50%), charge 80% and idle 2% (band 0%). The spec is updated (01-flow §4).
+- `Replay::hashes` with `every` 0 looped for ever; it now gives tick 0 and the last tick (fixed at commit).
+- Built by a delegated agent; checked again before commit.
+**Measured** (`harness campaign 200`, seeds 1–200, re-run before commit):
+
+| Bot | Campaigns won | Ended |
+|---|---|---|
+| commander | 41.0% | captain fell 112, keep taken 82, warband gone 6 |
+| leader | 0.5% | captain fell 199 |
+| charge | 39.5% | captain fell 121, keep taken 79 |
+| idle | 0.0% | captain fell 200 |
+
+- `--checks`: 7 of 7. Every campaign ends (200/200); 2,993/2,993 saves load back identical, and a v99 save is refused; same seed, same campaign (200/200); links L±1 (6,200/6,200); garrisons follow the formula (4,290/4,290); names (600/600 sets).
+- The Day 4 checks still pass: `places` 9/9, `orders` 34/34. The golden hashes are unchanged.
+**Open:**
+- Broodlords rarely fall (19 down against 522 escaped over 200 campaigns), so taken colours are rare.
+- The captain dies in almost every lost campaign (112 of 118).
+- `land` in `Battle.custom` is accepted and ignored: the sim has one land.
+- Honour and drills are day 6.
+
+# Decisions: day 5, the campaign's rules (01-flow §3–§5, §8; 03-land §7, §9; 04-battle §6–§8; 07-progression §1–§2)
+
+Code: `crates/sim/src/campaign/` (mod, tune, road, names, muster, foes, garrison, battle, finish, state, custom, auto,
+tests), `crates/sim/src/map/road.rs`, `crates/sim-wasm/src/campaign_api.rs`, `crates/harness/src/campaign.rs`. Small hooks
+outside those, each the least that would do: `battle/setup.rs` (Company `face`, `men`, `hp`; a captain-kind company in the
+warband stands as the captain; `Setup::road`), `battle/mod.rs` (`Squad.face`, `Battle::on_map`), `battle/outcome.rs`
+(`MapKind::Road` arms), `map/mod.rs` (`MapKind::Road`, `pub mod road`), `map/names.rs` (`NEVER` and `alike` made `pub`),
+`tune.rs` (one field, `campaign`), `sim/src/lib.rs` and `sim-wasm/src/lib.rs` (a `mod` line each), `sim-wasm/src/input_api.rs`
+(`face` in `squads_json`), `sim-wasm/src/places_api.rs` (`"road"` in `places_info`), `harness/src/main.rs` (the command).
+All numbers are in `CampaignTune` (`Tune::campaign`, overridable with `PROTO_TUNE='{"campaign":{...}}'`), except the road
+map's generation constants, which are named consts like every map's (D-05).
+
+Measured with `cargo run --release -p harness -- campaign 200 [--seed0 S] --bot B` unless said.
+
+### The garrison's size: worth `share · factor · W`, with factor 0.9 (a deviation from the spec's 0.6)
+**Decision:** a garrison is the rule's kinds (below), every company its unit's full count × one factor `m`, chosen so the
+garrison's men × worth (rank 0) is `share · factor · W`: `share = 0.80 + 0.075·step + 0.15·danger` (spec), W the warband's
+men × worth at its ranks. The factor is `CampaignTune::warband_factor` = **0.9**, not the spec's 0.6. Rank `floor(step/3)`.
+**Why:** "Size is scaled by the warband's size, with factor 0.6" read literally is `0.6 · share · W`. The spec's 0.6 was
+tuned for human garrisons; against the blight it is too easy for the balance bands of 01-flow §8:
+
+| factor | commander (band 30–50%) | leader-only (0–35%) | charge | idle (0%) |
+|---|---|---|---|---|
+| 0.6 (spec) | 74.5% | 12.5% | 80.0% | 2.0% |
+| **0.9** | **41.0%** (seeds 5001–5200: 42.5%) | **0.5%** (0.0%) | 39.5% | **0.0%** (0.0%) |
+| 1.0 | 26.5% | 0.0% | 21.0% | 0.0% |
+| 1.2 | 19.0% | (not run) | 10.0% | 0.0% |
+
+(The 1.0 and 1.2 rows were measured before the last two changes: the captain's hp kept to the hundredth, and names unlike
+each other. The 0.6 and 0.9 rows are the final code.)
+
+0.9 lands every band; 0.6 misses two. A one-line override restores the spec: `PROTO_TUNE='{"campaign":{"warband_factor":0.6}}'`.
+**Rejected:**
+- An elasticity reading, `m = share · (1 − 0.6 + 0.6·W/W₀)` with W₀ a reference warband: garrisons stay near full size
+  as the warband shrinks; measured 4.5% campaigns won by the commander (200 seeds), 153 of 200 ending "warband gone".
+- Spreading the garrison's men evenly over its companies (a troll company of 8 trolls): the units' own counts keep each
+  company recognisable.
+
+**Spec:** 01-flow §4 "Garrison size", §8 "Balance bands"; 04-battle §7 "Difficulty". Deviation: the factor.
+
+### The garrison's kinds as blight units
+**Decision:** shield → **troll**, spear → **blight-men**, archer → **drake**, horse → **drake**
+(`CampaignTune::blight`). The rule is the spec's: shield, spear, archer to start; +spear from step 2; +archer if
+dangerous (danger ≥ 1); +horse from step 4; +shield at the keep. So step 0 is troll, blight-men, drake; the keep at
+danger 0 is two of each.
+**Why:** blight-men are the swarm's line (spears); trolls the heavy anvil (shields, and "+shield at the keep" puts trolls on
+the nest); drakes are the blight's only reach (breath, for the archers) and its fast hunters on the wings (packs take the
+horse's stations, D-14). Measured at step 0: 3 companies, 25 men, m 1.40; the keep: 6 companies, 36 men, m 1.03 (seed 1).
+**Rejected:** archers as blight-men (no missiles; it would make the nest four companies of blight-men, the day-4 nest, at
+step 4 already).
+**Spec:** 01-flow §4; 00-start-here §A4.
+
+### The ford's raiders scale like a garrison
+**Decision:** at a ford the garrison is the raiders' waves (`FordTune::waves`): each wave keeps `round(len·m)` of its
+companies (at least 1), cycling its units if it grows, with `m` as above over the waves' full worth. Set in that battle's
+tuning.
+**Why:** the ford has no garrison of its own (D-19); scaling the waves is the same rule. At 0.9, m ≈ 0.4–0.6, so most
+waves are one or two companies.
+**Spec:** 01-flow §4; 04-battle §8 "Ford".
+
+### Broodlords stand as the place's broodlord, not as a company's commander
+**Decision:** a place's broodlord is the blight side's captain-kind commander (`Setup::general`, unit `broodlord`) with his
+name, way, face and rank = garrison rank + his own rank (+1 for the nest's lord), capped at 3. The blight's companies stay
+unnamed. Fords (raiders) and camps have none.
+**Why:** D-14 made the broodlord his side's captain, with every enemy-commander rule (−25 to every other company on his fall;
+his fall loses the battle), and rejected named blight companies (a commander as soldier 0 idles a quarter of a three-beast
+pack). The broodlord agent drives a side's broodlord by his way.
+**Rejected:** the broodlord as soldier 0 of the strongest company (01-flow §4's words): it needs new blight-company commander
+rules the sim does not have.
+**Spec:** 01-flow §4 "Enemy commanders"; D-14.
+
+### Where the broodlords stand, and when they come back
+**Decision:** the eight broodlords are a seeded queue. Every held place (holdfast, village) of the row chosen from and the
+next takes the queue's next, in place order; the lord always holds the keep. When a row is passed, broodlords left on it go
+to the back of the queue; one who escaped (the battle won, he lives) goes to the front, a rank harder (cap 3). A broodlord
+in a lost battle stays at his place. 8 broodlords cannot hold every held place of two rows at all times: a held place
+without one has a garrison and no broodlord.
+**Why:** "shuffled across the current row, the next row and the keep; captains who escaped come back first; they return
+further down the road, a rank harder". Recycling the passed-by keeps the next rows commanded.
+**Measured** (commander, 200 seeds): broodlords down 19, escaped 522.
+**Spec:** 01-flow §4.
+
+### Whose banner a broodlord's colours hang from
+**Decision:** the company with a living man nearest his body when the battle ends (ties to the lower id); if none lives,
+nobody's. The tally's `foe.by` and the company's `colours` carry it.
+**Why:** the sim counts kills per company but does not record who killed whom; adding a killer field to the sim's core was
+not mine to do.
+**Spec:** 01-flow §4 "If brought down".
+
+### The road: ids, positions, kinds
+**Decision:** place ids run row by row, `step·3 + lane`; the keep is 15 (step 5, the middle lane). The hall is not a place
+(`at: null`). Positions per 03-land §9, jittered by `hash32(seed, id, salt)` and snapped to tile centres. Row 0 is all
+holdfasts; later places roll camp 24%, village 22%, ford 20%, holdfast 34% from `hash32`. A village starts with 5 houses.
+**Measured** (`campaign 200 --checks`): 6200 of 6200 links go one row on within ±1 lane; later rows' 2400 places rolled
+holdfast 836 (34.8%), village 509 (21.2%), ford 477 (19.9%), camp 578 (24.1%).
+**Spec:** 01-flow §4; 03-land §9.
+
+### The road map: what the spec left open
+**Decision:**
+- `MapKind::Road`, 119×40, made by `map::road::make(seed, layout)` from the campaign's places and links;
+  `map::generate(seed, {kind: "road"})` is that seed's campaign road before it is walked.
+- Ponds where `fbm(seed+3, x·.13, y·.13) > 0.74`, rock where `fbm(seed+2, x·.16, y·.16) > 0.72`, forest where
+  `fbm(seed+1, x·.11, y·.11) > 0.6` (MEADOW's `road` parameters, chosen; every place is MEADOW today, so the per-land blend
+  with weight `exp(−d/2.5)` is MEADOW's own). The pond noise's frequency is chosen.
+- Links are straight roads (tiles within 0.6 paved, `m.roads` the segments for the land's dressing). River tiles within 1.8
+  of a link are a ford, and also within 2 of a place, so no place stands in the water.
+- Heights from the map relief (hills, pads under sites), the keep as the main site.
+- Sites in the kinds the view already draws: holdfast → tower, village → town, ford → village, camp → shrine (its fire),
+  keep → keep, the hall → a keep of ours (last site). Held places are the blight's until done, then ours; fords and camps
+  nobody's. Site id = place id.
+- The road battle never ends (no outcome, no night, `time_limit` infinite); a captain-kind company in the warband list
+  stands as the captain, so the campaign's captain keeps his name, face and hp.
+
+**Why:** "One view for everything": the existing view draws the road's sites, land and roads with no new kinds. The
+spec's hall, camp tents and wagons need view work (the screens' part), and `places[].kind` tells them which is which.
+**Measured:** 20 seeds: every site reachable from the hall, every link walkable (`map::road` test); the land is
+1860×912 texels with 34 roads; the column ordered to its first place stood 0.4 from it after 40 s (seed 4).
+**Spec:** 03-land §9 "The road".
+
+### The muster
+**Decision:**
+- A raw band has its unit's own count (spear 12, shield 10, archer 10, horse 6); seasoned (30%, `hash32`) 2 fewer, rank 1.
+- The first four bands are one of each kind, and the first four commanders one of each way, shuffled; the rest are rolled.
+- A commander is a veteran with chance 0.25 and brings +1 rank (back from an earlier campaign, 07 §2; the Hall's veterans
+  feed this tomorrow). A company starts at the band's rank + 1 if the way suits the kind + 1 for a veteran, capped at 3.
+- Planting a fifth company with four banners is refused; dropping on a planted band swaps (the other commander goes to the
+  dropped one's old band, or stands down).
+- `auto_muster` plants banner by banner the best free pair: suited first, then seasoned, a veteran, more men.
+- Positions: commanders in a line before the hall (x 9.5, 2 apart), bands in the meadows (x 24, 5 apart).
+
+**Why:** "about a company of men"; every muster offering every suited pairing makes the verb worth using.
+**Measured:** 50 seeds: 350 bands, 119 seasoned (34%), 88 of 300 commanders veterans.
+**Spec:** 01-flow §3.4, §4; 04-battle §6.
+
+### A battle at a place
+**Decision:** seed `hash32(seed, step, place)` (a refight is the same ground); map width `map_size_for(companies)`; the
+captain with his kept hp; companies with name, rank, way, face, freed and men as they stand. A village whose houses burnt
+on the road opens with only the houses still standing (the battle's `TownTune::houses` truncated). `battle()` sets the
+blight's bot (garrison, or raiders at a ford).
+**Spec:** contract §2; 01-flow §4 "Village under the torch".
+
+### The aftermath
+**Decision:**
+- **Survivors:** a man who fled with a routing company lives.
+- **Ranks:** one per kill threshold passed (6, 18, 36, cumulative over the campaign, `RankTune::kills`); the sim has kill
+  counts but no in-battle rank-ups. A freed company also gains one per battle survived; at rank 2 it leaves the reserve
+  (`freed: false`). Honour is +1 once a camp. Cap 3.
+- **Wounded:** after a won battle each fallen commander returns with chance 0.5 (`hash32`), and half the fallen men
+  (rounded down) return to their companies (`wounded_men`: "half the fallen were only wounded" read for the men too).
+- **A broken company:** if its survivors are at least 4 and there is room (fewer than max(5, banners) companies), an heir
+  leads them as a new company (new name, way and face, rank 0); otherwise they fill the emptiest ranks (most missing first,
+  ties to the lower id), and those with no room go home.
+- **The freed:** the survivors of the freed company that fell in; or, when taking the village ended the battle before they
+  could fall in (they join at the next tick's start), `min(6, people freed)`. A village won by leaving no defenders is
+  taken all the same: everyone in the houses still standing is freed. At least 4 and room: a levy company under a new
+  commander; otherwise they fill the emptiest ranks.
+- **Losing:** back to where the warband came from; the place's danger +1; the captain keeps his hp.
+- **The end,** in this order: the captain fell; the keep taken; no companies left.
+- The captain's hp is kept to the hundredth.
+
+**Why:**
+- The heir rule mirrors the spec's freed rule (≥ 4 and room → a company; otherwise the emptiest ranks), so both read the
+  same way.
+- Wounded men: a small lever, since the garrison follows the warband's worth: `wounded_men` 0 gave the commander 71.5%
+  (factor 0.6) and 47.5% (0.9), against 74.5% and 41.0% with 0.5.
+- The freed fix: before it, 72 villages were freed over 100 campaigns and 6 men joined. Taking a town ends the battle (it
+  is a holdfast) before the freed company is spawned.
+- The hp: serde_json does not parse every 17-digit float back exactly; a save printed `54.30809284207616` and came back as
+  `54.308092842076164`, so a save/load round trip failed. To the hundredth it is exact.
+
+**Measured** (commander, 200 seeds): 571 commanders fell, 187 returned wounded, 19 heirs; 963 freed men joined, 145
+companies founded by the freed; 169 villages freed, 205 burnt.
+**Spec:** 01-flow §4 "Commanders", "The freed", "Losing a battle", "The end"; 07-progression §2.
+
+### Days and villages
+**Decision:** a day passes on each arrival (a battle, or a camp: the camp is the rest). That day every village of the row
+arrived in and the next, not done and not where the warband is, loses a house. When a row is passed (won there, or the
+camp broken), its villages not freed burn out. A camp is done when broken.
+**Why:** "every village in sight loses a house each day the warband spends elsewhere, camps included; a village the warband
+passes by burns out". "In sight" is the row and the next: the part of the road whose broodlords are known.
+**Spec:** 01-flow §4 "Village under the torch"; §3.8 "Resting costs the villages in sight a day".
+
+### Saves
+**Decision:** the save is the whole state, `v: 1`; any phase but `battle` may save (a march saved is resumed on the road).
+A save of another version is refused.
+**Measured:** 2993 of 2993 saves at every between-battle phase (muster 400, march 1194, map 994, camp 205, lost 118,
+won 82) load to an identical save and state; a v99 save refused.
+**Spec:** 01-flow §5.
+
+### Names
+**Decision:** pools of 1–2-syllable words: commanders (38), broodlords (23), places (36), the bands' villages (20). One set
+of first sounds for commanders and broodlords together (the voice names both), one for places, one for villages. A word is
+never a command word or like one (`map::names::NEVER`, `alike`), never like another name already given or in `avoid`
+(commanders, broodlords and places avoid each other); the first sound is new where the pool allows.
+**Measured:** 600 of 600 name sets over 200 seeds (7600 names) have distinct first sounds, 1–2 syllables, none alike.
+**Rejected:** the day-3 names WIL, BORS and HAL: each is one edit from a command word (WILL, BOWS, HALT).
+**Spec:** 01-flow §6; 06-voice §4b; contract §3.
+
+### Custom battles (the war table)
+**Decision:** field and keep and village and ford as their maps; **night** = a keep at nightfall (the day 10 s at width
+48, then the night's 70 s; a living captain wins at dawn); **hold** = the open field with a held start (08-orders §8)
+until hold-the-line waves exist; size 4/6/9 our companies from spear, shield, archer, horse, spear, shield, archer, spear,
+horse, each under a commander whose way suits it; the enemy's base army (host, nest or waves) grows `round(len·size/4)`;
+strength ×0.8/×1/×1.2 the enemy's men, 0/0/75% of its companies +1 rank, the general at skill 0/1/2; `land` accepted and
+unused (the sim has one land).
+**Measured:** all 54 kind × size × strength battles build.
+**Spec:** 01-flow §3.3; 04-battle §7 "Difficulty".
+
+### The harness's policies
+**Decision** (`sim::campaign::auto`):
+- **Road choice:** a camp when below 70% of the warband's men or half the captain's hp; else a village with houses; else
+  the smallest garrison; ties to the lower id. **Honour:** the company with the most kills.
+- **commander** (the sensible bot) also **withdraws** by day when its captain is below 35% hp, or its standing men are below
+  35% of those it began with and fewer than the enemy's: the army is rallied and marched to its own edge (the battle is
+  lost, the captain lives). Only on a first attempt at a place (danger 0).
+- **leader** (leader-only): every second the army, captain first, is sent fighting at the place's keep or town, or the
+  ford's crossing; companies only follow. **charge** and **idle** are the sim's bots.
+
+**Why:** the commander bot never withdraws; without it every lost battle killed the captain (0 of 8 won). Withdrawing at any
+danger made a refight spiral: 12 of 200 campaigns hit the 40-battle cut-off, one man withdrawing 38 times. There is no
+leader bot in `bots/` (read-only for me), so the policy lives in the runner.
+**Spec:** 01-flow §8 "Bots", "Balance bands".
+
+### Open
+- **The captain falls** in most lost campaigns (commander: 112 of 118). Broodlords rarely fall (19 down, 522 escaped): the
+  broodlord keeps out of reach, so colours and pennants will be rare.
+- **The factor deviation** (0.9 for 0.6) wants the owner's yes, or a spec edit.
+- The road's hall, camp tents and wagons are drawn as existing site kinds; the view can draw them by `places[].kind`.
+- The road battle's fog dims ground the column has not seen; the screens may want the road all known.
+- Honour and drills (07 §1–§2) are not built; `Company` has kills, battles and ranks, and the Hall's veterans are listed
+  for them.
+
+## D-22 | 2026-10-29 | Day 5: the campaign screens (01-flow §3, §5; 03-land §7 "Campaign props")
+**Summary:**
+- **A scene manager** (`web/src/screens/`): title, war table, campaign card, muster, road, battle, aftermath, camp, chronicle and Hall. A land is made in the worker while the old scene runs, then a 0.45 s dithered fade from black. No page reloads; no material is disposed; each battle's `BattleView` and installers (input, places, voice, faces, broodlord) are disposed after it.
+- **Cards** (`web/src/view/cards/`): commander, band, company, king and place cards, with 25 pictograms on 7-row bitmaps and the real portraits.
+- **The muster:** lift, hover and drop, with the spec's timings, on touch and mouse. **The road:** glowing places with their names, the place card (garrison as kind × count, the broodlord's face and way), the column marching, cairns and planted banners, and the tally.
+- **Saves** in localStorage, only between battles; `?campaign=`; the dev hooks `autoMuster()` and `autoCampaign()`.
+- **Adapted:** no Myths standard (the enemy already is the beasts). The war table has WARDENS and BLIGHT as fixed pieces. One campaign card: THE WARDENS, 1123.
+- Built by a delegated agent; checked again before commit.
+**Measured:**
+- **My check:** `__v.autoCampaign()` on the dev server played two whole campaigns from the card to the Hall, 0 errors. The first won in 6 battles (holdfast, ford, village, holdfast, village, keep); the second in 5, with a camp honouring CORM. The Hall then held 5 fallen commanders' banners and one enemy colour.
+- **The agent:** 7 counted campaigns, all `ok`, 0 errors. Frame p50 2–4 ms on the road and in the muster (desktop and 375×812).
+**Open:**
+- A one-pixel flicker on commanders at zoom 28: 8 of 960 frames in the muster, and the same in a day-4 battle.
+- Raw bands wear the levy's smock and pitchfork rather than their own clothes for each kind.
+- No mute key outside battles; the mute setting is saved but not wired to sound.
+- On a phone, tally cards can overlap a neighbour's banner.
+
+# Decisions: day 5, the screens (01-flow §2–§6; 02-look §4, §6–§9; 03-land §7, §9; 07-progression §7)
+
+Choices made where the spec is silent, for the scene manager, the title and the setup, the cards and pictograms, the
+muster, the road, the battle's aftermath, the camp, the chronicle, the Hall and the saves. Code: `web/src/screens/*`,
+`web/src/view/cards/*`, `web/src/view/places/{road,structures,build,index}.ts`, `web/src/main.ts`, `web/src/dev.ts`,
+`web/src/input/*`, `web/src/battle/battle.ts`, one method in `web/src/view/view.ts` (`setLand`).
+
+### The scene manager: prepare, then swap, then fade
+**Decision:** `App.go(make)` runs `make()` while the old scene still runs (it makes the next battle and waits for its land
+from the worker), then in one frame: the fade goes black, the old scene is disposed, the new one is built, and the fade
+runs from black over 0.45 s in 16 Bayer levels on its own pixel layer. Scenes: `title`, `table` (top `title|setup`),
+`cards` (setup), `muster`, `road`, `camp`, `battle`, `chronicle`, `hall` (top `play`). The campaign's phase is read from
+the `Campaign` itself, never kept twice.
+**Why:** 01-flow §3 asks for a fade from black after every change and no page reloads; making the land first keeps the
+old scene moving instead of a black wait (the worker's land took 18–22 ms per battle in the gate run, the road's once).
+**Rejected:** a fade to black and back (the spec names only the fade from black); a scene per phase on one class (the
+road's map, march and camp share one scene and its peaceful battle, so they change without a fade).
+**Spec:** 01-flow.md §3 "Structure"; §8 Performance 1–2.
+
+### What persists, what is disposed
+**Decision:** the View and its renderer, the figure layer (`Figures`, passed into every `BattleView`), and every material
+persist. `View.setLand` swaps the terrain, water and scatter meshes and frees their geometries (the scatter's shared
+shapes only lose their instance buffers); the same land again (the road after the muster) only gets a new camera.
+Each `BattleView` is disposed after its scene: its marks' geometries freed, the figures' drawn states dropped (one
+empty update), the sim freed. Every installer returns `{dispose}`: input (pointer and keys unhooked), places (geometries
+not marked shared freed), voice (its own `dispose`), the faces and the broodlord. Materials are never disposed.
+**Why:** 01-flow §8 Performance 1: disposing materials deletes their shader programs (60–140 ms of recompiles per
+battle). New material objects with the same shaders share the cached programs.
+**Rejected:** one `BattleView` for every scene (its sim, records and marks belong to one battle).
+**Spec:** 01-flow.md §8; contract campaign §1 "Every installer returns { dispose(): void }".
+
+### Other parts are loaded lazily, each failing alone
+**Decision:** `installFaces`, `installBroodlord` and `portrait` are found with lazy `import.meta.glob`s and loaded once at
+start; a module missing or half-written leaves the battle without it (a flat side-coloured tile on cards) and logs a
+warning. The ui pixel layers, the cards and the war table never import them statically.
+**Why:** in the shared checkout the portraits module was mid-write (a missing `./brute`) and an eager import took the
+whole page down.
+**Rejected:** static imports (the page fails with any one part).
+
+### The ui pixel
+**Decision:** the screens' layers (scene ui, cards, fade) are canvases of whole "ui pixels", each `u` art pixels:
+`u = 2` where an art pixel is one CSS pixel (a phone), else 1. Scaled up with `image-rendering: pixelated`, opaque or
+empty pixels only.
+**Why:** at px 1 (375 × 812) the 5×7 font would stand 7 CSS px; at u 2 it is 14 CSS px, as on a desktop at px 2.
+**Rejected:** a third scale for faces (cards would mix two pixel sizes).
+**Spec:** 01-flow.md §6 "drawn in art pixels and scaled by integer factors only".
+
+### The title: the field, the banners, no Myths standard
+**Decision:** the title is a frozen field muster (seed `?seed` or 4, width 48) at dusk (`dayT` 0.9), the fog lifted so
+both armies show, the camera at the largest zoom up to 19 px/tile that holds every company in the lower three quarters.
+CONTINUE (when a campaign is kept and loads), CAMPAIGN and BATTLE are blue gonfalons with a gold edge on one crossbar,
+each at least 24 art px wide and 34 ui px tall. **The Myths standard is left out** for The Wardens.
+**Why:** the Myths standard toggles fantasy creatures; in The Wardens the enemy *is* the beasts (blight-men, trolls,
+drakes, broodlords: D-14), so there is nothing to toggle. A standard that does nothing, or that turns the enemy into men,
+would contradict the story.
+**Rejected:** keeping it as a decoration that burns and roars (a target with no choice); toggling the drakes only.
+**Spec:** 01-flow.md §3.1.
+
+### One campaign card: THE WARDENS, 1123, "FREE THE VALE OF THE BLIGHT"
+**Decision:** the card stands over the road's hall (the campaign is created first so its road's land is shown), gold
+framed: the title at font scale 2, the year 1123 in gold, the blurb in cream. A tap on it begins the muster on the same
+land (no swap). A small linen banner goes back.
+**Why:** 01-flow §3.2 asks for a title, a year and a one-line blurb in bitmap capitals. 27 characters (161 ui px) fit a
+375 px phone at u 2 (187 ui px); 1123 is a plain medieval year with no real-world event to collide with.
+**Rejected:** "DRIVE THE BLIGHT FROM THE VALE" (30 characters, 179 px: too tight on a phone).
+
+### The war table: "both empires" as two fixed pieces
+**Decision:** six pieces, each a picture and one word: WARDENS (a blue gonfalon) and BLIGHT (the broodlord's eye) are
+fixed (no gold edge, a tap does nothing); the land (ANY, MEADOW, MOOR, BIRCH, AUTUMN, MARSH: the first campaign's five
+and ANY), the kind (FIELD, NIGHT, KEEP, HOLD, VILLAGE, FORD), the size (4, 6, 9 banners drawn) and the strength (EASY,
+FAIR, HARD as 1–3 troll marks) each turn to their next value on a tap. FIGHT goes straight to `Battle.custom(seed,
+json)`; after the aftermath the war table comes back (two taps from the field). Each fight's seed is the count of
+fights so far, hashed (kept in the settings).
+**Why:** The Wardens' two sides are fixed (the wardens against the blight); keeping both pieces keeps the table's six
+places and says who fights. Only the first campaign's lands exist in the spec's road rules (03-land §6).
+**Rejected:** a single piece for both sides (the table would have five); offering all 15 lands (only the meadow is
+drawn so far; the sim decides what a name gives).
+**Spec:** 01-flow.md §3.3; contract §2 `Battle.custom`.
+
+### Cards: layout, rise, fade, placement
+**Decision:** a card is dark cloth with a woven line every fourth row in a frame (gold, grey, or wood), the face on top
+(80 × 96), then the name, at most one word, and rows of pictograms wrapped at the face's width. It rises 4 ui px and
+dithers in over 1/6 s, and dithers out over 1/6 s (by `hide`, or after an optional `life`). It stands 6 ui px plus the
+thing's own radius beside the point, on the side asked if it fits, else the other; squeezed off both sides (a phone), it
+stands above or below the point. `Cards.update(id, spec)` redraws one in place (the tally) and `move` follows its thing.
+**Why:** 01-flow §3: beside, never over; rises in 1/6 s and fades. A vertical layout keeps a face card 88 ui px wide,
+so it fits beside a thing in the middle of a phone.
+**Rejected:** face to the left of the text (140 ui px: wider than half a phone).
+**Spec:** 01-flow.md §3 "Diegetic UI rules"; contract §5.
+
+### Pictograms
+**Decision:** 7-row ASCII bitmaps (`web/src/view/cards/picto.ts`): the spec's eleven (man, chevron, crossed swords,
+banner, pennant, heart and empty heart, broken sword, hall, ribbon, coin), the kind marks redrawn from the banners'
+own (spear, shield, bow, horseshoe) and the blight's sigils (claw, crack, flame, eye), plus a sign for each way
+(stubborn an anvil, reckless a bolt, steady a pillar, veteran a star), a cairn and a tent. The place card shows the
+garrison as kind × count (`garrison[].n`) in red, the broodlord's way sign in red, a village's standing houses.
+**Why:** 07-progression §7 asks for the garrison and the broodlord's way; the commander card for the way's sign
+(01-flow §3). The contract's `Icon` list has no way signs, so they were added on the cards' side.
+**Spec:** 01-flow.md §3; 07-progression.md §7.
+
+### The muster draws its own records
+**Decision:** the muster builds its own man and banner records for the figure layer from `state_json().muster`, at the
+campaign's own spots (`bands[].at`, `commanders[].at`: commanders in a line before the hall, bands in the meadows across
+the road), each band a block of 4 files (3 for riders) 0.62 tiles apart (0.95 for horse), facing the commanders' line
+(a quarter turn). It does not use `road_battle()`'s men.
+**Why:** lift, hover, the ripple and the hops are drawn heights and facings the sim knows nothing of; records built
+here move them exactly. `road_battle()` still gives the land.
+**Rejected:** `road_battle()` (its squads stand, and could only be moved by orders).
+**Spec:** 01-flow.md §3.4.
+
+### The muster's clothes, chevron pulse, hops and carry
+**Decision:**
+- Raw bands stand in their own clothes: drawn as the levy (smock, bare head, pitchfork); raw riders keep their horses.
+  A planted band takes the hall's colours and its kind's gear with its banner. Seasoned bands are in colours, rank 1.
+- Lift: 0.55 tiles in 0.14 s; the suited, unplanted bands get a gold ellipse breathing ±2.5% at 5 rad/s and their
+  banner shows the chevron they would gain, on and off at 4 Hz.
+- Hover: the band under the carried commander (within 2.6 tiles of its middle) turns to face him; a cream dashed ring.
+- Drop: down in 0.09 s, a thud (a 110→45 Hz knock and a puff of low noise), a dust-coloured ring 0.35 s; the men leap
+  0.22 tiles over 0.26 s, each when the ripple reaches him (0.07 s per tile from his commander); a suited band then
+  hops twice (0.3 tiles, 0.22 s each) in a gold ring 0.6 s, and keeps its chevron (the campaign's `rank`).
+- A carried commander follows the ground 44 CSS px above the thumb on touch; lifting one off a company calls
+  `stand_down`; dropping on a band calls `plant` (the campaign swaps); dropped anywhere else he walks back to his spot.
+- Once every banner has its company (`muster.ready`) the camera eases out over the road's first places, which glow.
+**Why:** the spec gives the lift, the drop and the ripple's numbers; the rest is chosen to read at 16 px/tile.
+**Rejected:** a different figure kind for raw men of each weapon (the figure layer is another part's; the levy is the
+existing "own clothes").
+**Spec:** 01-flow.md §2 "Carrying on a phone", §3.4.
+
+### The road: places drawn by the screens, a second tap sets out
+**Decision:** the road's places are built by `RoadSites` (web/src/view/places/road.ts) from `state_json().road`, not
+from `road_battle()`'s sites: holdfast → tower, village → the town with its standing houses (the rest ruins, smoking),
+ford → the wagons by a fire, camp → four tents round a fire with a cart (new), keep → the keep, and the Hall of Banners
+at `road.hall` (new: a timbered hall 2.5 × 1.05 under the warband's roof, a brazier). Places the blight holds wear its
+colours; freed ones the warband's blue. The road battle's capture rings are not drawn.
+A tap on a place shows its card; a second tap on a reachable place whose card is up sets out (`set_out`, the save, then
+the column marches: an army move to the place at the quick pace with the clock ×2, the camera following the captain).
+Arriving is the captain within 2.6 tiles of the place (or 24 s of real time), then `arrive()`.
+**Why:** the sim's site kinds have no camp or hall; 03-land §9 maps each place kind to a building. Two taps let the
+place card "show the threat before you commit" (07-progression §7) without a button. The march measured 3.3–4.2 s
+of real time per leg in the gate run.
+**Rejected:** setting out on the first tap (the place card would never be read); walking at the plain pace (8–9 s).
+**Spec:** 01-flow.md §3.5; 03-land.md §7, §9; 07-progression.md §7.
+
+### The land remembers
+**Decision:** after each battle the screens add, at that place, one cairn per 3 men fallen there in all (losses summed
+from the tally), 2.5–5.5 tiles from it at hashed angles, and one planted banner per company destroyed, in rows of 6
+(0.9 apart, 1.1 between rows) south-west of it, with one ribbon per battle the company fought. They are kept with the
+campaign's save (`memory.props`, `memory.dead`). A tap on a planted banner shows the company's grey face.
+**Why:** `state_json()` has no per-place dead; the tally has each company's losses.
+**Spec:** 03-land.md §7 "Campaign props".
+
+### The tally
+**Decision:** on the road after a battle each surviving company gets a card beside its banner: its name and a man
+pictogram counting from the men it had down by its losses (red, 0.11 s a man), then up by its joiners (green); then the
+new chevron count shows and a company that ranked up gets a gold frame. The cards wait 0.6 s for the fade, and stay
+1.6 s after the last count.
+**Spec:** 01-flow.md §3.5.
+
+### The aftermath, the camp, the chronicle, the Hall
+**Decision:**
+- Aftermath: when the sim decides the battle, the input is taken off (no more orders), the bots play on, and after
+  3.2 s (or a tap after 0.6 s) `finish()` applies it and the road (or the chronicle) follows. No text.
+- Camp (`arrive()` at a camp): a tap on a company's banner honours it (`honour`, once; the campaign's `honoured` says
+  if it was): it is ordered 1.6 tiles out of the line toward the camera, a gold ring where it stood, its horn
+  (`companyHorn`, by its call) and a cheer (band-passed noise swelling over a second, 0.6 s after the horn), and its card
+  in a gold frame. A tap on a glowing place breaks camp and sets out.
+- Chronicle: over the road at dusk by the hall; the captain then every commander, living in colour and fallen grey,
+  names under the faces; below a red rule the enemy commanders met, grey if brought down; the frame gold if won. Faces
+  are halved (every other pixel) when a row of full faces does not fit. A tap after 0.6 s goes to the Hall.
+- The Hall: this campaign's `hall_json()` is added to the Hall kept for the campaign (newest 24 fallen, 12 colours) and
+  the kept campaign is dropped; the road at the hall shows the fallen commanders' banners north of it and the enemy
+  colours south, in rows of 6, 0.8 apart; a tap on one shows the grey face; a tap elsewhere goes to the title.
+**Spec:** 01-flow.md §3.7–§3.10; 03-land.md §7.
+
+### Saves
+**Decision:** keys `wardens.campaign` (`{v: 1, save: Campaign.save(), campaign, memory}`), `wardens.hall.<campaign>`,
+`wardens.campaign.last`, `wardens.custom`, `wardens.settings` (the fight and campaign counters), `wardens.mute`; every
+access in try/catch. The campaign is saved after setting out, after a battle's `finish`, and at a camp (never in
+'battle'). CONTINUE loads it with `Campaign.load` (a throw discards it); a kept 'march' resumes the march to `to`.
+`?campaign=<name>` goes past the title: the kept campaign if it is that one, else a new one's card.
+**Spec:** 01-flow.md §5.
+
+### The dev hooks and autoCampaign
+**Decision:** `__v` follows the scene on screen (`battle`, `input` are getters). New: `scene()`, `sim` (the bindings),
+`autoMuster()`, `autoCampaign(opts)`, `benchScene({frames})`; `pilot(on)` now holds for the battles that follow.
+`autoCampaign` drives the real scenes: the card, `auto_muster`, a march to the reachable place of the lowest lane (a
+reachable camp when a company is under 60% of its men), every battle piloted and fast-forwarded in 300-tick chunks with
+the aftermath skipped, the first company honoured at each camp, the chronicle, the Hall. It steps frames itself and
+yields through a message channel (not throttled in a hidden tab); a scene change in flight is awaited, never spun past.
+It plays without a brain (`App.brainOff`: no voice, the broodlords' minds disabled) unless `{brain: true}`.
+**Why:** the gate must pass with no console errors whether or not a brain runs; with no llama-server the broodlord's
+requests fail with HTTP 500, which the browser logs as errors.
+**Spec:** 01-flow.md §5 "Debug hooks".
+
+### Phones: a zoom floor, and standing facings settled
+**Decision:** on a screen narrower than 480 art px (a phone upright at px 1), fitting the camera stops at ZOOMS[3]
+(13 px/tile), the muster's at ZOOMS[4] (16), and the player pans; the title's field never goes below ZOOMS[2] (11).
+The muster's standing figures face one of 16 ways nudged by 0.02 rad (bands a quarter turn plus the nudge).
+**Why:** fitting the whole parade ground into 375 px gave 13 px/tile and men about 10 CSS px tall; at 16 the drags by
+touch (4 of 4 planted) still reach every commander. A commander standing at some free angles kept one pixel of his
+shoulder flipping while the view panned (the shimmer check: 3 bad frames of 60 at 16 px/tile, gone when he turned
+0.05 rad); with the settled facings the check gives 0 at the muster's start (zooms 7, 16, 34; and 9–28 both ways).
+**Rejected:** fitting everything at any zoom (unreadable on a phone).
+**Spec:** 01-flow.md §1 "Phone and desktop are both first-class"; 02-look.md §9 "Never shimmer".
+
+### Place names are redrawn only when the view moves
+**Decision:** the names beside the glowing places are drawn on the scene layer only when the camera's whole-pixel
+origin, its sub-pixel, the zoom, the layer or the reachable places change.
+**Why:** a 2D canvas changed every frame is composited anew every frame for nothing. (One early phone run of the road
+measured p90 25 ms; after this change 2.4–5.6 ms. The machine was shared with other agents' builds, so the first
+number may be load, not the redraw.)
+
+### The input: a press becomes a drag or a pan
+**Decision:** `Pressed.becomes` (`stroke` in battle, `drag` carrying a commander, `pan` on the road and the title's
+field) decides what a press turns into past slop; a pan begun by a touch press pinches when a second finger comes
+down. Pointer and keys are disposable. A tap that selects one of our companies (or taps a routing one) calls
+`inputHooks.onCompanyTap`, and the battle's scene shows the company card (rank, ribbons, last losses and joiners,
+colours taken) for 3.5 s.
+**Spec:** 01-flow.md §2 "Pointer state machine", "What a tap does".
+
+## D-23 | 2026-10-29 | Day 5: commanders' faces (01-flow §3.6, §7; kit checklist §5)
+**Summary:**
+- **Portraits are procedural pixel faces** (the kit's fallback 3), drawn from the same per-person look as the figure, because there are no Muse Image keys. The close-up of the 3D figure's head (fallback 2) was built first and did not read as a face: 1–2 px eyes, the hat brim over the brow, no jaw. It stays only as a comparison row in the faces lab.
+- **One seed, one person:** the `face` seed drives the figure (skin, hair, beard; a broodlord's hide, horns, mane, muzzle and eyes) and the portrait, so a commander looks the same in every battle and on every card.
+- **The post-process of 01-flow §7:** 80×96, every face looking the same way, eyes on row 40 and the head's middle at column 40, one palette of at most 64 colours per side, grey for the fallen.
+- **In battle** (`installFaces`): the enemy commander's card at first sight; a commander's fall gets the slow hold, a grey card where he lies, and his banner planted there.
+- Built by a delegated agent; checked again before commit.
+**Measured** (the agent):
+- Cast of 21 (12 wardens, 9 broodlords): 108–184 ms cold, under load (budget 300).
+- Palettes 64 and 64. Eyes on row 40 in 63/63 faces; head middle within 0.5 px.
+- The same seed gives identical pixels.
+- Broodlords: 0 pairs alike at a glance in the casts of 3 seeds (before the follow-up all nine differed only in their horns).
+- Figure flicker at zooms 7 and 16: still 0.
+- **My check:** the faces lab shots for seeds 7 and 11, and the cards on the road and in the Hall.
+**Open:**
+- Two hooded warden pairs are close.
+- Cards show no rank marks yet (`CardSpec.face` has no rank).
+- Muse Image can replace these behind the same `portrait()` once keys exist.
+
+# Decisions: day 5, the commanders' faces (01-flow §3.6, §7; 02-look §5–§6; contract campaign §3, §6)
+
+Code: `web/src/view/portraits/` (index, paint, warden, brute, post, close), `web/src/view/figures/person.ts` and changes in
+`outfit.ts`, `figures.ts`, `rig.ts`, `blight.ts`, `blight-parts.ts`, `types.ts`; `web/src/battle/faces.ts`; small additive
+edits to `web/src/battle/records.ts` (`faces`, `faceSeed`) and `web/src/battle/clock.ts` (`fallHold`); the faces lab
+`web/labs/faces.html` + `web/src/labs/faces/main.ts`.
+
+### Gate (measured)
+
+Machine: this Mac, shared with the other agents' builds (load average 39–51 while measuring), so times vary by 3×.
+
+| Check | Result |
+|---|---|
+| Time, a cast of 21 (12 wardens + 9 broodlords) from cold, palettes included, colour then grey | before the broodlord follow-up: 47, 64, 69, 83, 103, 161, 167 ms over seven page loads; after it: 108, 147, 163, 184 ms over four (`window.__facesCold`); budget 300 ms |
+| Time, a warm cast of 21 (`__faces.gate().timing`) | after the follow-up 42–98 ms colour (2.0–4.7 ms per portrait); grey from the cached colour picture 4–11 ms per cast |
+| Palette per side | warden 64 (207 colours the painter can lay down, k-means in Lab); blight 64 (92 inputs). Colours actually used over 3 casts: warden 62, blight 62. Greys: 10 and 11 of 12 |
+| Eyes' row, head's middle (seeds 7, 11, 2026: 63 faces) | eyes 40.00 on every face; head's middle 40 or 39.5 (worst 0.5); 0 misses. Wardens: 2 eye pixels each (white beside iris); broodlords: 6–7 glow pixels |
+| Crop (01-flow §7 step 3) | wardens 0 px; 10 of the 27 broodlords −1 px in x (the crop puts them back) |
+| Same seed twice | pixel-identical: 63/63 within a run; cast hash `17152495` (campaign cast, after the follow-up) on 2 page loads. Before it: `221fbe9c` on 3 loads, `d0fe649a` (synthetic cast) on 3 loads, unchanged by the bounding-box speed-up |
+| Broodlords apart (9 foes per seed, 36 pairs; seeds 7 / 11 / 2026) | pairs sharing hide and horn shape: 4 / 3 / 1; sharing hide, horn shape and mane shape: 1 / 1 / 0; alike at a glance (the same hide, horn shape and colour, mane shape and colour, muzzle and markings): 0 / 0 / 0; most traits any pair shares: 5, 6, 6 of 9; least differing pixels between two portraits: 14.8 % / 5.6 % / 11.5 %, mean ΔE over the picture 3.7 / 1.5 / 3.6. Before: one brown, one black mane, one muzzle, nine faces differing in horns only |
+| Wardens apart (12 per seed, 66 pairs) | least differing pixels 7.1 % / 0.7 % / 0.6 %: two pairs nearly alike (51 and 43 px), see Open |
+| Figure flicker, units lab 701×431, clock frozen | zoom 7, 16: camera right and diagonal 0 bad frames; figure drift up (shadows off) 0. Zoom 34: camera 5/6 and 7/9 bad frames of ≤3 px Δ≤10; figure drift 4/6 of ≤3 px Δ16 |
+| … the same with a face seed on every commander and the broodlord | identical numbers at every zoom |
+| Blight roster after the follow-up, the broodlord as a boar with a crest and ash horns ×0.85 (seed 31), an ape with no mane (16), a bull with a long rust mane and black horns (40) | zoom 7, 16: 0 bad frames in every case. Zoom 34: camera right 0/6 (seed 31: 1/6, 1 px Δ1); diagonal 5/9 (seed 31: 6/9) of ≤3 px Δ≤16; figure drift 6/6 of 3 px Δ16, as with no seed |
+| Shimmer, game seed 4 field, 480×320 art px, 60 steps of 0.1 px right and up, 2 planted banners in view | zoom 7, 16: 0 bad frames. Zoom 34: 6 and 3 bad frames, ≤3 px. Planted banners alone: 0 and 0. Battle figures with face seeds cleared: 6 and 3 (identical) |
+
+**Read:** zooms 7 and 16 are 0. The zoom-34 residual is D-15's pre-existing one on this GPU ("at 28–34 one to four
+pixels, Δ1 to Δ16"); it is the same with and without the face changes, and the planted banners add none. Figure drift
+with shadows on is D-09/D-15's open item (53/126/541 px at 7/16/34, the same with faces).
+
+Shots (`out/shots/`):
+- `d5-faces-lab-seed7.png` (the campaign's cast for seed 7: captain, 6 commanders at the muster, 5 more synthetic;
+  9 foes; colour and grey; last row the fallback (a) close-ups for comparison), `d5-faces-lab-seed11.png`,
+  `d5-faces-lab-seed2026.png`
+- `d5-faces-first-sight.png` (seed 4 field, tick 598: the broodlord's face card beside its standard)
+- `d5-faces-fall-moment.png` (tick 1450: WIL falls; the clock at slow 0.354; his grey face where he fell)
+- `d5-faces-planted-banner.png` (tick 2328: the planted banners of WIL and ODA among the dead)
+- `d5-faces-units-lab-brute-31.png`, `-16.png`, `-40.png` (the units lab's blight row, its broodlord given three faces:
+  the figure's hide, horns and their colour, mane and heart differ on the field)
+
+---
+
+### Procedural faces, not the figure's close-up
+**Decision:** `portrait()` paints fallback (b): procedural pixel faces from layered parts. Fallback (a), the commander's
+own 3D figure head close up (`portraits/close.ts`), was built first, with the same framing and post-process, and is kept
+for the comparison row in the faces lab only.
+**Why (measured on the lab's seed-7 cast):** in (a) the eyes are 1–2 px dots and the mouth a single pixel; a kettle
+hat's brim (1.75× the head's radius) hides the brow and eyes unless the camera is below eye level; the 9-segment head
+sphere has no jaw, cheek or brow planes, so dark skin with a dark beard reads as the back of a head. The broodlord's
+close-up reads better (horns, ember eyes, heart) but its head is a fifth of the tile. (a) also needs its own WebGL
+context: 212 ms for its first 9 portraits (shader compiles), 30 ms after; and in a battle the figures' fog hook would
+tint it by the map tile at the origin. (b) reads as faces at 80×96 (3-pixel eyes, brows, a nose with its profile,
+mouth, five beards, five hair styles, scars), costs 1.3–4.7 ms per portrait with no GPU, and its colours are known in
+advance, so the shared palette is exact.
+**Rejected:** (a) for the game; a higher-poly head only for portraits (a second model of every head, beard and helmet,
+and still no pixel-art outline).
+**Spec:** 01-flow.md §7 (with no Muse Image keys, the kit's fallbacks in order).
+
+### One seed, one person
+**Decision:** `figures/person.ts` turns a face seed into a person: skin, hair, beard and a bald crown (which the figure
+shows), and hair style, brows, nose, jaw and scar (portrait only). Skins: the men's `#dcae82` and the peoples' skins of
+02-look §5 (`#ca9a68`, `#f2caa4`, `#94603c`, `#5e3a22`; Italy's `#d8aa7a` is left out, within 2 ΔE of the men's, so
+two faces in the two skins could not be told apart); hair: the men's five and Gaul's red and straw; dark skins take the
+two dark hairs; beards 0–4 or none as `id % 7` did. Under a hood or a coif a fringe of the hair shows at the brow. A
+broodlord's `brute(seed)`: "Broodlords differ at a glance" below.
+**Why:** "the same number drives the figure on the field and the portrait" (contract §3). The spec's men have one skin;
+with one skin twelve commanders differ only by hair and beard, and in grey not at all. Every colour is one the spec
+already names.
+**Rejected:** inventing new skin or hair hexes; a text `look` per person (01-flow §7's last line), since the seed is
+what the campaign stores.
+**Spec:** 02-look.md §4 "Men", §5 "Peoples", "Head"; contract campaign §3.
+
+### Broodlords differ at a glance
+**Decision:** `brute(seed)` draws every trait from its own hash: hide (5), horn shape (3), length (3) and colour (3),
+mane shape (none, a crest, long) and colour (4), eyes (3, and the heart burns in the same glow), muzzle (bull, boar,
+ape), scar (4), war-paint (none, bars across the brow, a stripe down the muzzle, claw marks; cream or red ochre) and
+markings on the hide (plain, dark stripes, pale blotches). The figure on the field shows hide, horns (shape, length,
+colour: dyed copies `blHornsD0–2` of the three horn parts), mane (`blMane`, the new `blCrest`, or none), muzzle (the new
+`blHead1` boar and `blHead2` ape skulls) and the eyes' and heart's glow; paint, markings and scars are portrait only (the
+head is 4–10 px on the field). The colours:
+- hides: the blight ramp's brown `#6a3e36` (07-progression §8), the trolls' ash `#77727e` (D-15), and beside them a
+  bruise purple `#5e4466`, a grey moss `#5e6142` and a bone-pale `#b0a693` (the building stone ramp's fourth step);
+- manes: `#2e241c` (the dark mane), Gaul's rust `#a04a22`, bone white `#d2c29c`, the stones' ash `#5a544d`;
+- horns: bone `#d2c29c`, the black coat `#3e342c`, the stones' `#8e877a`;
+- eyes (core, rim): the ember `#f07a22`/`#c84a1c`, a sick green `#9fd36a` (the plan's archer green)/`#5e8a34`, a
+  cold pale `#cfe3e8`/`#7fa0aa`;
+- paint: the device's cream `#f3ecd8`, the chestnut coat's red ochre `#a8642e`.
+**Why (measured, the campaign's 9 foes for seeds 7, 11, 2026):** with only the horns varying, nine faces read as one.
+After: no pair alike at a glance in 108 pairs; at most 6 of 9 traits shared; the least different pair still differs
+in 5.6 % of its pixels (mean ΔE 1.5). Hides are kept low in saturation: a moss hide must not melt into the meadow's
+greens, nor a purple compete with our blue. The heart follows the eyes, so the brightest spot on the beast differs
+too. The hide markings shift a pixel a ramp step up or down, so they add no colour.
+**Rejected:** the blight ramp's light step `#84503f` as a hide (2 steps from the brown: the same beast); bright moss
+greens; varying the body's size (a sim-facing measure).
+**Spec:** 07-progression.md §8; DECISIONS.md D-15 "The broodlord"; contract campaign §3 (an escaped foe returns and must
+be known).
+
+### Commanders' figures take their looks from the face seed
+**Decision:** `ManRecord.faceSeed` (records.ts fills it for a company's commander and the captain from
+`Records.faces`, which `installFaces` sets from `squads_json`'s `face`). `outfit()` then takes skin, hair, beard and
+bald from `person(faceSeed)`; a broodlord takes flesh, horns, horn length, mane and eyes from `brute(faceSeed)`. Every
+other rule is unchanged, and a man with no seed looks as before. `Figures` recomputes a look when the seed changes.
+A company whose `face` is 0 (any battle outside the campaign) gets `hash32(squad id, 0xfa, 0xce)`, so its figure and its
+card still agree.
+**Why:** the brief; the contract's "0 to derive it from the id". Deriving from the squad id rather than the soldier id
+gives the portrait one seed to paint from.
+**Rejected:** a lookup hook inside `Figures` (it has no squad ids); putting the seed in the soldier buffers (the sim's
+contract, for a view-only fact).
+**Spec:** contract campaign §3, §6; 02-look.md §5.
+
+### The broodlord's mane is dyed
+**Decision:** `blMane`'s hair is painted `shade(1)` and dyed with `Look.mane` (MANE by default); horn variants are two
+new parts (`blHorns1`, `blHorns2`); a longer or shorter pair is the part scaled about its root on the skull (−0.015,
+0.075), its thin swell scaled with it.
+**Why:** a dyed `shade(1)` × MANE draws exactly the fixed MANE it was; the default broodlord's pixels are unchanged
+(flicker numbers identical). The only change: under a hit flash the mane now flashes white like every dyed part.
+**Rejected:** four fixed-colour mane parts.
+**Spec:** 02-look.md §5 "Colour", "Hit flash"; DECISIONS.md D-15 "The broodlord".
+
+### The painter
+**Decision:** each part is a shape with a pseudo-3D normal (ellipsoids, superellipses, turned ovals, polygons, tapered
+strokes), lit from the upper left and front, (−0.55, −0.62, 0.56), into five ramp steps; the ramp is built in Lab from
+the base colour (−30, −17, −7, 0, +9 L*, shadows cooler, light warmer), the base at step 3. Parts are drawn back to
+front with a 1-pixel contour in the ramp's darkest step. The head is turned three quarters to the picture's right;
+every face looks the same way, so the post-process's mirror is a no-op by construction. Shapes carry bounding boxes.
+**Why:** 01-flow §7's skeleton ("head turned three quarters to the right", "soft light from the upper left", "dark
+outlines", "small eyes"). The bounding boxes took a portrait from 6–12 ms to 1.3–4.7 ms with pixel-identical output
+(cast hash unchanged).
+**Rejected:** hand-drawn sprite sheets (a fixed set of faces, not a seed's); dithered shading (the quantise must not
+dither, and dithered skin crawls on a 2× card).
+**Spec:** 01-flow.md §7.
+
+### What a warden's portrait shows
+**Decision:** from the figure's look: tunic (`body`), sleeves (mail for shields), the collar at 0.72, the tabard's cream
+fleur (the banners' 7×9 FLEUR), the rank-2 cape in team [1] with gold clasps, the headgear (kettle hat with its brim's
+shadow on the brow, nasal helm, mail coif with nasal helm, archer's hood with its point, the levy's cap; the captain's
+gold kettle hat), the plume (team [3], gold at rank 3, the captain's red) as a feather held by the helmet, beard types
+0–4 as on the field (none under a coif, as on the field). `opts.unit` picks the dress; omitted, the commander is
+bare-headed in the tunic (the muster, before he has a company). `opts.rank` (added to the contract's options) gives the
+rank marks.
+**Why:** "driven by the same look as the figure"; a commander at the muster has no kind yet.
+**Spec:** 02-look.md §5 "Kinds", "Rank marks"; 01-flow.md §7 `who`, `dress`.
+
+### What a broodlord's portrait shows
+**Decision:** a skull by muzzle (a bull's broad muzzle; a boar's long snout with a flat nose and tusks; an ape's short
+deep muzzle over a heavy underbite), a heavy lit brow over deep sockets, glowing eyes slanting down to the muzzle (a
+core and a rim pixel each side, their rows averaging 40), nostrils, fangs, optional tusks, ears under the horns, the
+horns by shape, length and colour (the great pair spreading wide, ram's curls, tall and upswept; a broken tip, a scar
+over a dimmed eye, a torn ear as scars), the mane (none and a bare neck, a crest of bristles down the neck, or long and
+shaggy), war-paint, hide markings, and the heart burst open in the chest in the eyes' glow.
+**Why:** D-15's broodlord, so the card is the beast on the field.
+**Spec:** DECISIONS.md D-15; 00-start-here.md §A2.
+
+### Grounds
+**Decision:** warm ochre `#977b3c` (the land's thatch ramp) for the wardens, slate `#46424c` for the blight.
+**Why:** 01-flow §7's `ground`: "warm ochre" and "dark slate grey". Thatch is the ochre the land already uses; the
+slate sits between the rock ramp's `#3c3834` and the trolls' `#4a4650`, light enough that the dark manes still part
+from it.
+**Spec:** 01-flow.md §7.
+
+### The post-process
+**Decision:** (1) the ground is the background colour and nothing else may take it (a shadowed cheek mapped onto the
+ochre would read as a hole); (2) the faces all look right, so no mirror; (3) the eyes are found from the pixels (a
+warden's white with the iris to its right; a broodlord's ember above row 64) and the head's middle as the middle of the
+head's own run of pixels on the eyes' row (the skull and face as painted, under any hair or helmet); the picture is
+moved by whole pixels so they land on row 40 and column 40 (a half pixel is left, an even run's best); (4) one palette
+per side by k-means in Lab over every colour the side's painter can lay down (all skins, hairs, dress and headgear of
+every unit at every rank), weighted toward skin (6) and hair (3), with the ground, ink and eye colours kept, centres
+snapped to a real input colour, no dithering. The palette is made once and does not depend on which faces were drawn.
+(5) skin lightness against the figures' is 0 by construction (the same base colour at the ramp's base step). A k-means
+centre left empty takes the colour worst served by its own (with 92 blight inputs, empty centres had left 53 colours of
+64; now 64).
+**Why:** 01-flow §7 steps 1–5, adapted to a painter that knows its colours.
+**Rejected:** a palette from the faces drawn so far (a portrait would change with the order of drawing).
+**Spec:** 01-flow.md §7 "Post-processing".
+
+### The grey of the fallen
+**Decision:** the colour portrait mapped by lightness onto 12 neutral greys between the ink and the cream line, lifted
+(0.12) and flattened (γ 0.7); made from the cached colour picture.
+**Why:** straight by lightness, a dark-skinned commander's face fell into the ink (WIL's card in the first fall shot);
+lifted, the features stay. From the cache it costs 2–10 ms per cast of 21.
+**Spec:** 01-flow.md §3.6, §3.9.
+
+### Face moments
+**Decision:** `installFaces(play, view)`:
+- the first time an enemy commander with a face (`face` > 0, or the enemy's lord) has his banner drawn (so in sight) and
+  on screen, his card shows beside the banner for 3 s and follows it;
+- on `CommanderFall` / `FoeCommanderFall` for a commander with a face (ours: named or the captain): the clock's slow
+  (already battle.ts's 0.35 for 0.9 s / 0.7 s), his grey card with a grey frame beside the spot where he lies (his
+  soldier's spot from the sim's buffers, whatever the fog) for the slow hold + 1.8 s, and his company's banner planted
+  0.3 tiles to his left (as a bearer's), upright, unmoving, its tatter as at the fall, for the rest of the battle (an
+  enemy's only where the ground has been seen);
+- the cards are a `Cards` of its own (z 21) on the view's clock, so they hold while paused and keep time in slow motion
+  as real time does.
+**Why:** the battle scene calls the installer with `(play, view)` only, so it cannot reach the app's cards. "First
+sight" means the player sees it: a card for a company drawn off screen would stand at the screen's edge pointing at
+nothing. The fall moment waits for the frame's records, since events arrive before them.
+**Rejected:** a deeper or longer slow than 04-battle §1's (a spec constant); the clock change is one getter (`fallHold`).
+**Spec:** 01-flow.md §3.6; 04-battle.md §1.
+
+### Planted banners are a figure layer of their own
+**Decision:** one extra `Figures` (made once, kept like the materials) draws the planted banners with the battle's
+frame (zoom, exact clip, shadow texel), posed through `poseBanner`/`poseStandard` like any company's.
+**Why:** the figure style, no alpha, the exact clip's pixel stability (shimmer 0 at 7/16/34 for the planted banners
+alone); the battle's own banner list is rebuilt by records.ts every frame and is not this part's.
+**Spec:** 02-look.md §6; 01-flow.md §3.6.
+
+### Open
+- Wardens under a hood or a coif hide hair, ears and (under the coif) beard, so two such commanders with the same skin
+  and no beard differ only in brows, nose, jaw, scar and the fringe: seed 11's ULF and BLY (shields) differ by 51 px,
+  seed 2026's ODA and PRYCE (archers) by 43 px. An iris colour, or the beard through the coif's face opening (the
+  figure hides it), would part them.
+- Broodlords' traits are drawn per seed, so a cast can still share a hide and horns by chance (pigeonhole: 9 foes, 5
+  hides); "alike at a glance" was 0 in 108 pairs, not 0 by construction.
+- The zoom-34 flicker and shimmer residual (≤3 px, Δ≤16) and figure-drift shadows are pre-existing (D-09, D-15), not
+  changed by this work.
+- `CardSpec.face` carries no rank, so a card shows a commander without his plume or cape; adding `rank` there (and
+  passing it to `portrait`) would match the field.
+- The broodlord painter is cropped −1 px by the post-process on every face; shifting its shapes a pixel left would
+  make that crop 0.
+- Muse Image portraits replace (b) when keys exist; `portrait()`'s signature and cache stay.
+
+## D-24 | 2026-10-29 | Day 5: the LLM broodlord (06-voice §8; 00-start-here §A3.2)
+**Summary:**
+- **The bots carry out intents.** Glimmer's orders for team 1 enter the command log as `src: brain`. The garrison, general and raiders bots leave those companies to the intent until it lapses 30 s after the brain last gave it, or the company breaks. Without intents the bots are unchanged, and the golden hashes hold.
+- **The mind** (`web/src/voice/broodlord/`) runs on slot 1, every 8 s of game time and at once on a rout or a place changing hands, with at most 2 orders. It sees through the blight's fog. The four ways: reckless commits and chases; steady baits and holds the NEST; stubborn gives no ground; veteran hits weak points.
+- **The brain lock:** the page sends one request at a time. Voice claims the brain when the captain starts to hold, aborting the broodlord's call. After an abandoned request, the next waits until `/slots` shows the slot idle.
+- **The drafter stays on** for the live game: without it the voice brain p50 is 1,592 ms instead of 834 ms, and 7 of 48 orders were abandoned instead of 1. `BRAIN_DRAFT=0 scripts/brain.sh` turns it off when several clients share the server.
+- Built by a delegated agent; checked again before commit.
+**Measured:**
+- **My checks:**
+  - `harness intents`: 6/6 (a sally reached the far village in 8/8 seeds, median 19.5 s; a replay with 48 brain intents matches in 8/8).
+  - The broodlord eval cached: 27/27. Held out, live: 14/16 sensible, 16/16 valid, p50 3.1 s; both misses are the stubborn way.
+  - The voice evals still pass cached: Day 1 20/20, 08 suite 145/146.
+  - A live keep battle with 10 brain intents replays natively to the page's hash (`36429b7b3db815f3` at tick 1234).
+- **The agent:** two browser drives (11 and 7 min) with the broodlord on and scripted voice orders. The server was healthy 203/203 times; 129 broodlord calls, 0 failed. In the second drive 0 of 23 voice orders were abandoned.
+**Open:**
+- Hold-the-line waves (08-orders §8) not built.
+- The broodlord re-reads its whole field on each call (about 395 tokens). Caching the static part would save about 1 s.
+- A request lock in the Vite proxy would protect the server when several clients share it. Same-slot requests 200 ms apart hung it 3/3 with the drafter (0/12 without).
+- `Setup::named` has no `big`, so a replay of an `?army=big` battle cannot be re-run.
+
+# Decisions: day 5, the broodlord's mind (06-voice §8; 00-start-here §A3 "2. The enemy's mind"; 04-battle §7)
+
+Code: `crates/sim/src/bots/{intent,checks}.rs` and small hooks in `bots/{mod,garrison,general,raiders}.rs`,
+`crates/sim/src/tune.rs` (`IntentTune`), `crates/sim-wasm/src/broodlord_api.rs` (+1 `mod` line in `lib.rs`),
+`crates/harness/src/intents.rs` (+ the `intents` subcommand in `main.rs`), `web/src/voice/broodlord/{index,mind}.ts`,
+`web/src/voice/{brain,field,resolve}.ts`, `web/src/voice/live/{live,typed}.ts`, `tools/voice-eval/{broodlord,brain-stress}.ts`
+(+ `--suite broodlord` in `main.ts`), `docs/voice-eval/broodlord-{situations,heldout}.json`, `scripts/brain.sh`.
+
+### Intents reach the bots through the command log
+**Decision:** the brain's orders are `Command {team: 1, src: brain}` in the ordinary order queue (the page's
+`sim.apply`, stamped with the current tick, applied before that tick as every queued command is). Each bot reads the
+battle's log from a cursor (`Intents::absorb`), only entries applied before the tick it thinks at, and turns every
+brain deed for its own side into one intent per company (the latest replaces the older). No new state crosses the
+WASM boundary, and nothing in the sim reads the model.
+**Why:** a replay is the seed, the log and the bots by name; the bots re-run read the same brain commands at the same
+thinks. `harness intents` "replay": 8/8 seeds, the game loop and its replay (48 brain intents, bots re-run) reach the
+same hash. The page does not `flush` after the broodlord's commands, so they land exactly as in a replay.
+**Rejected:** a WASM call to set intents on the bot (state outside the log: a replay would need it too); flushing at
+once (it makes the bots think before the brain's command at that tick, which a replay does the other way round only by
+luck of timing).
+**Spec:** 06-voice §7, §8; AGENTS.md rules 1, 5.
+
+### What "carry it out" means, per intent
+**Decision:** while a company is under an intent the bot's own plan leaves it out of its roles (garrison guard,
+threat response, sallies, posts; the general's line, reserve and rests; the raiders' targets; raiding works) and any
+of its own deeds for it are dropped. The bot carries the intent out:
+- **go to a place** (`move`, `hold` at a place): ready to fight, it attacks a seen foe within `guard_r` 5 of the spot
+  and goes back when the fight there is over; without fighting (`fight: false`, a pull back) it keeps walking out;
+- **attack / charge / commit at a foe:** while the foe stands it stays on it; when it breaks or falls, the next seen
+  foe within `follow_r` 8 of the company, else it stands;
+- **take a place:** taken, it holds it against foes within 5 and goes back to it beyond `hold_r` 2.5 (the
+  garrison's own sally comes home as soon as the site is its own);
+- **anything else** (hold here, withdraw, regroup, guard, screen): left to the sim.
+The general draws fronts that gather every company, detached or not (`plan_front`); in a thought with a front, the
+intents are given again right after it.
+**Why (`cargo run -p harness -- intents`, 8 seeds each, the same seeds without the intent for contrast):**
+- sally: 8/8 seeds both blight-men companies reached the village farthest from the keep (median 19.5 s), 8/8 still held
+  it at 29 s, 0 samples off the intent; without it 0/8 reached it;
+- pull back: 8/8 left the fight (median 0.1 s), 8/8 gained ground (median gap +8.3 tiles in 10 s); without it the gap
+  changed −0.5 tiles;
+- attack that: the trolls stayed on the riders (which their own quarry rule never picks) in 393/398 samples; without
+  the intent 0. Before the re-issue after a front it was 321/398: the general's front pulled them back every 6 s;
+- raiders: a held raider company kept its hold in 343/343 samples; without the intent 11;
+- lapse: 8/8 kept for the whole 30 s, 8/8 reclaimed by the garrison after it (latest at 30.6 s), 8/8 back at the post.
+**Rejected:** blocking the general's fronts while any intent stands (the rest of its army would never advance).
+**Spec:** 06-voice §8 "the garrison and general bots carry them out between calls"; 04-battle §7.
+
+### An intent lapses 30 s after the brain last gave it
+**Decision:** `IntentTune::lapse_s` = 30 (also `guard_r` 5, `follow_r` 8, `hold_r` 2.5), or sooner when its company
+breaks. Then the bot's own plan takes the company back; the general recalls it to the army when it is out of the fight
+(no foe within its contact range 10). An army order from the brain (none is ever sent) would hold the bot's own army
+orders for the same time.
+**Why:** the brain is called every 8 s; 30 s lets two calls in a row be skipped (voice has the brain, a slow call) and
+still covers a march of ~20 tiles and a capture (the sally above: 19.5 s median), while a brain that dies hands the
+companies back within 30 s. The field tells the brain how long ago it ordered each company, so it renews what it
+still wants.
+**Rejected:** until done (a dead brain would freeze companies at their last order); 8 s, one period (one skipped call
+and the bots override the brain mid-sally).
+**Spec:** 06-voice §8 ("intents… carried out between calls"; "if the brain fails, the bots alone play").
+
+### Without intents nothing changes
+**Decision:** every hook is a no-op with no brain command in the log: filters over empty lists, the carry-out returns
+at once.
+**Why:** `cargo test --workspace`: the replay, field, mirror, orders, town and ford golden hashes are unchanged (the
+determinism tests pass without `UPDATE_GOLDEN`); `npm run test:wasm` passes.
+**Spec:** AGENTS.md "Determinism".
+
+### The blight's companies are named BLIGHT1…, TROLLS1…, DRAKES1…
+**Decision:** `broodlord_field` names each company of the blight by its kind's stem and its number among the side's
+companies of that unit, in id order, the dead keeping theirs. `who` takes those names, the kinds (BLIGHTMEN, TROLLS,
+DRAKES) and OTHERS; never ARMY (the resolver is told `army: false`, so naming every company is not an army order).
+The warband's companies are targets by their names (WIL, BORS, CAPTAIN), with the sim's squad id carried beside them.
+**Why:** the blight's companies have no commanders and no names; numbered kind names are unambiguous for the model and
+stable through a battle. Orders per company keep every intent on a company the bots can carry out.
+**Rejected:** E-ids for the warband (the model attacks names it reads better); ARMY for the blight (its broodlord would
+lead the line, and the general's own army orders would fight it).
+**Spec:** 06-voice §8 "its own companies in who and the player's seen companies… as targets".
+
+### The broodlord's own prompt, cached on slot 1
+**Decision:** a prefix of its own (`mind.ts`): the rules (seven verbs: take, attack, charge, move, hold, withdraw,
+regroup; `to`, `round`, `fight`), four example fields each answered once per way, then `YOU ARE <name>. YOUR WAY: …`
+last, so the four ways share all but the end of the cached prefix. The turn is the blight's field (its fog), then
+`YOUR ORDERS:`; the answer is a bare JSON array of at most 2 orders under a whitespace-free grammar of this field's
+names (prefilled answer turn, as D-03). Slot 1, `cache_prompt`, temperature 0. The game warms the prefix once at the
+start; calls are streamed.
+**Why (`npm run voice-eval -- --suite broodlord`, 27 situations, drafter on):** 27/27 sensible and valid, brain p50
+3715 ms, p95 4477 ms, 38 tokens written, 395 new prompt tokens read per call (the field changes every call). The first
+version scored 24/27: a reckless broodlord marched to a neutral village with `fight: false` twice, and an OTHERS that
+named only routing companies was refused. The prompt and the code were changed against these situations (see the
+next decisions), so a held-out set of 16 situations from other seeds, never used for tuning, measures it again
+(`--set heldout`): **14/16 sensible, 16/16 valid**, brain p50 3029 ms, p95 3821 ms. Both misses are the stubborn way
+sending companies to take a village far from what it holds (town seed 6 at 15 s, town seed 7 at 25 s).
+**Rejected:** the voice's prefix with a broodlord section (one slot's cache would hold both; the voice's prefix is
+~3,900 tokens already); free text (the order language is the one language).
+**Spec:** 06-voice §8 "Its own slot and its own cached prefix", "At most 2 orders per call".
+
+### Going to a place the blight does not hold is taking it; broken companies are passed over
+**Decision:** in `decide` (before the shared resolver): a `move` to a village, the shrine, the tower, the keep or the
+town the blight does not hold becomes `take`; kinds and OTHERS expand to the companies that can obey; a company named
+that has broken since the field was read is passed over, and an order left with none is moot (dropped, counted).
+**Why:** the warband's resolver already makes a move to a blight-held village a take (D-07); for the blight, walking
+into an unheld village is burning it. A company breaks between the field and the answer (2–5 s).
+**Spec:** 06-voice §6 "validation"; 08-orders §2.
+
+### The four ways
+**Decision:** the way's line in the prompt (04-battle §6 names the ways; 06-voice §8 describes two):
+- **reckless:** commits early and all at once, throws its companies at the nearest warband companies, chases, burns
+  villages, never pulls back; with no foe in sight it goes for the villages;
+- **steady:** the cautious one of §8: baits with one company while the rest hold the NEST and its places; strikes only
+  a company alone, shaken or routing; pulls back a company that is losing;
+- **stubborn:** gives no ground: holds the NEST and every place it owns, retakes at once what it loses, never pulls back,
+  does not go far;
+- **veteran:** strikes where the warband is weak (archers, a strayed company, the captain exposed), goes round flanks,
+  rests a hurt company and sends a fresh one.
+The eval judges "sensible for the way" by rules in code (`tools/voice-eval/broodlord.ts` `sensible`): reckless never
+pulls back (a withdraw, a regroup, or a move without fighting that ends nearer home) and leaves no company idle when
+something is in sight or a place is not its own; steady never charges and sends at most one company far out (beyond 14
+tiles of home, and 8 of its own places); stubborn never pulls back nor goes far, except to retake a place; veteran,
+when it strikes and a weak foe is in sight, strikes one.
+**Why:** each way then plays differently at the same moment (e.g. FIELD 1 of the examples); the rules are what a
+watcher would call "in character" and can be checked without a person.
+**Rejected:** a numeric aggression knob in the bots (the way would not reach the model's choices).
+**Spec:** 06-voice §8 "Personality"; 04-battle §6.
+
+### The brain lock: one request at a time from a page, voice first
+**Decision:** every request to the brain from a page goes through `brainLock` (brain.ts): one at a time, in order.
+The voice claims the brain when the captain starts to hold, and when typed or spoken words need the brain (not for
+the fast path); a claim aborts the broodlord's request in flight and refuses new ones until it is released. The
+broodlord skips its call while voice has or wants the brain (an 8-s call is skipped; a call for a break or a place
+changing hands waits for the brain to be free). The broodlord's requests are streamed. After the page gives up a
+request (an abort, a timeout), the next request to that slot waits until the server shows it idle (`/slots`, at most
+20 s).
+**Why:**
+- llama-server goes on with a request whose client has gone: to its end when it is a plain one (14.5–17 s of work left
+  after an abort, measured direct and through the Vite proxy), to its next token when streamed (2.4–3.5 s on a long
+  prompt; in the stress test the slot is idle p50 831 ms, max 2272 ms after the abort);
+- with the drafter, a request queued on a slot that is still reading a warm (`n_predict` 0) hangs that slot: 3 of 3
+  times (`brain-stress --stagger 6 --warmfirst`), 0 of 12 without the drafter. The settle wait keeps the page from ever
+  doing that itself: `--rewarm 12` (the broodlord's warm aborted by voice 200–780 ms in, then its next call at once on
+  the same slot) 12/12 answered, drafter on.
+- aborting for voice (`--aborts 30`, drafter on): 30/30 aborted, the voice order after it p50 1319 ms, p95 1998 ms (the
+  voice alone p50 857 ms, p95 1057 ms), 0 failures, server healthy.
+- the voice claims the brain only when its words need it: the first live drive aborted broodlord calls for fast-path
+  words ("charge", "hold") and counted those aborts as failures (a 15 s back-off); both fixed before the second drive.
+**Rejected:** a lock in the Vite proxy (the dev server is not this part's file; recorded as open); waiting for the
+broodlord's slot to idle before every voice request (adds p50 ~0.8 s to voice after each abort, for a cross-slot case
+that measured safe: pairs 10/10, cross-slot warm-then-order 10/10).
+**Spec:** 06-voice §8 "Voice has priority"; D-20 "brain stability".
+
+### The drafter stays in the live game
+**Decision:** `scripts/brain.sh` keeps the DFlash drafter by default; `BRAIN_DRAFT=0` runs without it. Run without it
+when several clients share one server (several tabs, the eval beside a page, other agents' dev servers).
+**Why (same machine, same hour; `npm run voice-eval` Day 1 live, 3 runs, 48 brain calls each; the broodlord eval;
+`brain-stress`):**
+
+| | drafter | no drafter |
+|---|---|---|
+| voice brain p50 / p95 | 834 / 1572 ms | 1592 / 3720 ms |
+| voice orders over the 2.5 s abandon | 1 of 48 | 7 of 48 |
+| voice alone (stress baseline) p50 / p95 | 857 / 1057 ms | 1976 / 3458 ms |
+| broodlord call p50 / p95 | 3715 / 4477 ms | 5008 / 6542 ms |
+| broodlord eval | 27/27 | 27/27 |
+| aborts then voice (30) | 30 ok | 30 ok |
+| voice + broodlord together (10) | 10 ok | 10 ok |
+| two orders together on one slot (10) | 10 ok | 10 ok |
+| an order 200–1500 ms after another, one slot (12) | 12 ok | — |
+| an order 200 ms after a warm, one slot | **0 of 3 (slot hung)** | 12 of 12 |
+| a broodlord warm on 1, then an order on 0 (10) | 10 ok | — |
+
+Also, with the drafter, slot 0 hung once by itself during the measurements, when other agents' pages and this
+process's stress test were on the server together (out/brood/server-dflash-hang.log: a request queued on slot 0 while
+it processed, then nothing for 60 s). Without the drafter one voice order in seven would be abandoned; with it, the
+only failure seen needs two clients on one slot, which a single page never sends (the lock and the settle wait).
+**Rejected:** dropping the drafter (doubles the voice's latency); a request lock in the proxy (not this part's file).
+**Spec:** 06-voice §2, §9; D-07; D-20 "drafter off for the demo, or a request lock in the proxy".
+
+### The live battles: the server stays up
+**Decision:** measured in the browser (my dev server on 5183, no hot reload; `out/brood/driver.txt` steps the battle
+when the pane is hidden, gives a scripted voice order every 17 s (WAV clips from out/voice-clips through the hold and
+speech-to-text, alternating with words through the typed path), polls `/brain/health` and `/brain/slots` every 5 s, and
+goes on to the next battle when one is decided or reaches 240 s). The commander bot pilots the warband; the broodlord
+plays every battle, its way changing with each; `army=big`, `map=64`; drafter on.
+**Measured** (`python3 out/brood/summarise-drive.py <utc>` over out/voice-log/voice.jsonl):
+- **Drive 1, 11 minutes** (11:53–12:04 UTC, 5 battles, 568 s of game time): 121/121 health checks answered 200,
+  no error in the server log. Broodlord: 76 calls, 54 answered, 22 aborted for voice, 0 slow, 0 failed; p50 5119 ms,
+  p95 9659 ms (big armies make a longer field); 87 deeds queued, 0 refused. Voice: 33 orders, 9 fast path, 12 answered
+  by the brain (p50 898 ms), **12 abandoned at 2.5 s**: 11 of them typed through the dev hook, which (unlike the typed
+  line) did not read the field into the brain first, so each read 250–420 new tokens beside the broodlord's cancelled
+  call; 1 spoken (its warm still reading after 4 s). Both slots busy at once in 17 of 121 samples.
+- **Drive 2, 7 minutes** (12:05–12:12 UTC, 3 battles, 388 s), after the fixes (the claim only for brain words; the hook
+  warms as the typed line does): 82/82 health checks 200. Broodlord: 53 calls, 41 answered, 12 aborted for voice,
+  0 failed, p50 4013 ms, p95 6219 ms, 59 deeds, 0 refused. Voice: 23 orders, 7 fast, 16 by the brain (p50 1081 ms),
+  **0 abandoned**; the lock: 5 voice requests found a broodlord request ahead of them and waited 0 ms each (the abort
+  is immediate in the page); never more than one request in flight from the page.
+- **A replay without the model:** a keep battle (seed 3, veteran) played live for 1234 ticks with 10 brain intents;
+  its replay from the page (`__v.broodReplay()`: seed, map, log less the bots' orders, bots by name) gives the page's
+  own hash `36429b7b3db815f3` at tick 1234 in WASM (`replay_hashes`) and natively (`harness hashes
+  out/brood/live-replay-keep3.json --every 1234`).
+**Spec:** the brief's browser measurements; 06-voice §7.
+
+### installVoice can be disposed
+**Decision:** `installVoice(play)` returns the Voice, whose `dispose()` removes its key and blur listeners, the
+captain-hold hook (if still its own), the visibility listener, the listening ring, the typed line (its canvas and key
+listener), any hold and claim on the brain, the broodlord it installed from the URL, and restores the view's draw hook
+when nobody wrapped it since.
+**Spec:** docs/engine/contracts/campaign.md §1 "Every installer returns `{ dispose(): void }`".
+
+### `?broodlord=<way>` until the scenes pass a foe
+**Decision:** `installVoice` installs the broodlord from `?broodlord=reckless|steady|stubborn|veteran` (`1` is reckless,
+`&broodname=`) on a battle whose scene gave none (the `?kind=` dev path). The scene's own `installBroodlord` for the
+same battle replaces it. `?brain=off` disables both.
+**Spec:** the brief ("enable it for testing with a URL flag … wired from your own files").
+
+### Open
+- The held-out score (14/16) is the honest one; the stubborn way goes too far for villages.
+- The broodlord's field is read whole on every call (~395 new tokens; more with big armies): a call holds the server
+  3–6 s of every 8. Putting the map's places and ground first and what changes last would let the slot cache the map
+  (estimated ~1 s less per call), and a shorter read is a shorter wait for a voice order after an abort.
+- A request lock in the Vite proxy (and the hosted proxy) would protect the server from several clients at once.
+- `replay_hashes(json, 0)` (and `Replay::hashes` with `every` 0) never returns: it hung my test tab once.
+- A replay of an `?army=big` battle cannot be re-run: `Setup::named` knows `blight` and `mirror`, not `big`.
+- The hold-the-line waves (08-orders §8) are not built.

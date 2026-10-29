@@ -147,11 +147,15 @@ export class BattleInput implements Gestures {
     const who: Who = sel !== null ? { t: 'squad', id: sel } : { t: 'army' };
     switch (hit.kind) {
       case 'company':
-        // a routing company takes no orders (tapping it would show its face); a second tap deselects
-        if (hit.routing) return;
+        // a routing company takes no orders (tapping it shows its face); a second tap deselects
+        if (hit.routing) {
+          inputHooks.onCompanyTap(hit.squad);
+          return;
+        }
         if (this.selectedNow) ui.lapse = LAPSE_S;
         else if (sel === hit.squad) this.deselect();
         else this.select(hit.squad);
+        if (ui.selected === hit.squad) inputHooks.onCompanyTap(hit.squad);
         return;
       case 'captain':
         // rally, or the selected company is called back

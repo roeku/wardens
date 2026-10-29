@@ -7,6 +7,7 @@ mod ford;
 pub mod names;
 pub mod path;
 mod relief;
+pub mod road;
 
 use serde::{Deserialize, Serialize};
 
@@ -62,7 +63,7 @@ pub struct Site {
 }
 
 /// Which battle the map is for: an assault on a keep or a town (village under the torch), a ford rescue, or an
-/// open-field skirmish with mirrored halves.
+/// open-field skirmish with mirrored halves; or the road between battles (03-land.md §9), a peaceful battle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MapKind {
@@ -70,6 +71,7 @@ pub enum MapKind {
     Town,
     Ford,
     Field,
+    Road,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -123,8 +125,12 @@ pub struct BattleMap {
     pub farms: Vec<P>,
 }
 
-/// Generates the map for `seed`, retrying `seed·7919 + attempt` up to 80 times until it is valid.
+/// Generates the map for `seed`, retrying `seed·7919 + attempt` up to 80 times until it is valid. The road (its own
+/// size, 119×40) is the campaign of that seed's road, with every place still held by the blight.
 pub fn generate(seed: u32, opts: MapOpts) -> BattleMap {
+    if opts.kind == MapKind::Road {
+        return crate::campaign::road_map(seed);
+    }
     let width = if WIDTHS.contains(&opts.width) { opts.width } else { map_size_for(4) };
     let mut last = None;
     for attempt in 0..ATTEMPTS {
@@ -133,6 +139,7 @@ pub fn generate(seed: u32, opts: MapOpts) -> BattleMap {
             MapKind::Keep | MapKind::Town => assault::make(s, width, opts.kind),
             MapKind::Ford => ford::make(s, width),
             MapKind::Field => field::make(s, width),
+            MapKind::Road => unreachable!("the road is made above"),
         };
         if m.valid() {
             return m;

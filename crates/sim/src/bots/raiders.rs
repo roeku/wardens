@@ -7,17 +7,17 @@
 //! fighting: the civilians must cross there or at the far ford, and the warband stands between. Works they see are
 //! torn down as the other bots do (`raid_works`).
 
-use super::{Orders, Seen, companies, nearest, seen};
+use super::{Orders, Seen, nearest, own, seen};
 use crate::battle::Battle;
-use crate::contracts::{Deed, Kind, Team, Who};
+use crate::contracts::{Deed, Kind, SquadId, Team, Who};
 
-pub(super) fn think(b: &Battle, team: Team, out: &mut Orders) {
+pub(super) fn think(b: &Battle, team: Team, held: &[SquadId], out: &mut Orders) {
     let foes = seen(b, team);
     let folk: Vec<Seen> = foes.iter().filter(|f| f.kind == Kind::Folk).cloned().collect();
     let troops: Vec<Seen> = foes.iter().filter(|f| f.kind != Kind::Folk).cloned().collect();
     let r = &b.tune.bots.raiders;
     let goal = b.places.ford.as_ref().map_or(b.map.deploy[1 - (team as usize & 1)], |f| f.crossing[0]);
-    for i in companies(b, team) {
+    for i in own(b, team, held) {
         let s = &b.squads[i];
         let here = b.centre(i);
         let civ = nearest(&folk, here, f64::INFINITY);

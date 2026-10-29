@@ -53,7 +53,12 @@ impl Battle {
     pub fn time_limit(&self) -> f64 {
         let o = &self.tune.outcome;
         let w = self.map.wf() / o.width_base;
-        if self.map.kind == MapKind::Field { o.field_s * w } else { o.battle_s * w + o.night_s }
+        match self.map.kind {
+            MapKind::Field => o.field_s * w,
+            // The road is a peaceful battle: it never ends by time.
+            MapKind::Road => f64::MAX,
+            _ => o.battle_s * w + o.night_s,
+        }
     }
 
     /// Step 9, holdfast capture: within 1.8, `rate = dt/(6·k)·(1 + 0.25·(weight−1))`, k = 2 for the keep and 1.5
@@ -106,7 +111,7 @@ impl Battle {
     /// then night falls (sight ×0.6; the garrison attacks; torches are lit, places.rs). Dawn comes 70 s later. The
     /// relief from the east comes 6 s after nightfall (`spawn_places`).
     pub(super) fn update_night(&mut self) {
-        if self.map.kind == MapKind::Field || self.decided.is_some() {
+        if matches!(self.map.kind, MapKind::Field | MapKind::Road) || self.decided.is_some() {
             return;
         }
         let o = &self.tune.outcome;
@@ -136,7 +141,8 @@ impl Battle {
 
     /// Step 12 (04-battle.md §8): the captain first, then withdrawal, then the battle type's own rules, then time.
     pub(super) fn check_outcome(&mut self) {
-        if self.decided.is_some() {
+        // The road (03-land.md §9) is a peaceful battle: nothing decides it.
+        if self.decided.is_some() || self.map.kind == MapKind::Road {
             return;
         }
         let o = self.tune.outcome.clone();
@@ -191,6 +197,7 @@ impl Battle {
                         break 'd Some(d);
                     }
                 }
+                MapKind::Road => {}
             }
             if self.time() >= self.time_limit() {
                 if self.map.kind == MapKind::Field {

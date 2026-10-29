@@ -16,6 +16,8 @@ export interface Input {
   readonly screen: Screen;
   /** Once a frame, before the render: held keys pan, the selection lapses, the stroke's preview updates. */
   frame(dt: number): void;
+  /** Unhooks the pointer and the keys (the battle's scene ends). */
+  dispose(): void;
 }
 
 export function installInput(view: View, battle: BattleView): Input {
@@ -28,8 +30,13 @@ export function installInput(view: View, battle: BattleView): Input {
     pointer,
     screen,
     frame(dt) {
-      keys(dt);
+      keys.frame(dt);
       cmd.frame(dt);
+    },
+    dispose() {
+      pointer.dispose();
+      keys.dispose();
+      cmd.deselect();
     },
   };
 }

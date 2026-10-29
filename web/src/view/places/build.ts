@@ -239,6 +239,21 @@ export function mesh(g: THREE.BufferGeometry, mat: THREE.Material, name: string)
 /** A unit box as an exact-face geometry, for pieces moved one by one (flags, works). */
 let unitBox: THREE.BufferGeometry | null = null;
 export function boxGeometry(): THREE.BufferGeometry {
-  unitBox ??= faceGeometry(new THREE.BoxGeometry(1, 1, 1));
+  if (!unitBox) {
+    unitBox = faceGeometry(new THREE.BoxGeometry(1, 1, 1));
+    unitBox.userData.shared = true;
+  }
   return unitBox;
+}
+
+/**
+ * Frees what a scene's places made for themselves: every geometry under `root` not marked shared. Materials are never
+ * disposed (docs/spec/01-flow.md §8 Performance 1: three.js would delete their shader programs).
+ */
+export function disposeGeometries(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    if (o instanceof THREE.InstancedMesh) o.dispose();
+    const g = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
+    if (g && !g.userData.shared) g.dispose();
+  });
 }

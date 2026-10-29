@@ -39,6 +39,11 @@ export class Clock {
     return t;
   }
 
+  /** Real seconds left of a fall's slow time (0 when none): the face moment (battle/faces.ts) keeps time with it. */
+  get fallHold(): number {
+    return this.fallLeft;
+  }
+
   /** A commander fell: slow time for `seconds` of real time (the longer hold wins). */
   holdSlow(seconds: number): void {
     this.fallLeft = Math.max(this.fallLeft, seconds);

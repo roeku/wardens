@@ -21,6 +21,13 @@ pub struct Company {
     pub way: Option<Way>,
     /// Freed men: the reserve (01-flow.md §4 "The freed").
     pub freed: bool,
+    /// A stable seed for the commander's look (docs/engine/contracts/campaign.md §3): the same number drives the
+    /// figure and the portrait. 0 means the view derives it from the squad's id, as before the campaign.
+    pub face: u32,
+    /// Men as they stand (the campaign's companies after their losses); `None` is the unit's own count.
+    pub men: Option<u16>,
+    /// The commander's hp as it stands (the campaign's captain between battles); `None` is full.
+    pub hp: Option<f64>,
 }
 
 impl Company {
@@ -30,13 +37,14 @@ impl Company {
     }
 
     pub fn of(unit: Unit, name: &str) -> Company {
-        Company { unit, name: name.to_string(), rank: 0, way: None, freed: false }
+        Company { unit, name: name.to_string(), rank: 0, way: None, freed: false, face: 0, men: None, hp: None }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Setup {
-    /// The player's companies; the captain is always added.
+    /// The player's companies; the captain is always added. A captain-kind company in the list (the campaign's,
+    /// with his name, face and hp) stands as the captain instead of the default one; it is not a company.
     pub warband: Vec<Company>,
     pub garrison: Vec<Company>,
     /// Team 1's commander (a captain-kind unit: the broodlord, or the human general), at its deploy point.
@@ -106,13 +114,19 @@ impl Setup {
     }
 
     /// The setup a map kind opens with when nothing else is given: the blight, as an army on the open field, as
-    /// raiders at the ford, holding the place otherwise.
+    /// raiders at the ford, holding the place otherwise; on the road (a peaceful battle) the warband alone.
     pub fn for_map(kind: MapKind) -> Setup {
         match kind {
             MapKind::Field => Setup::field(),
             MapKind::Ford => Setup::ford(),
             MapKind::Keep | MapKind::Town => Setup::default(),
+            MapKind::Road => Setup::road(),
         }
+    }
+
+    /// The road between battles (03-land.md §9): the warband alone, nobody to fight.
+    pub fn road() -> Setup {
+        Setup { warband: warband(), garrison: Vec::new(), general: None, mirror: false, held: false }
     }
 
     /// A setup by name: `blight` (or empty) is what the map kind opens with; `mirror` is the human field.
@@ -128,7 +142,10 @@ impl Setup {
         let (ours, theirs) = (b.map.deploy[0], b.map.deploy[1]);
         let heading = atan2(theirs.y - ours.y, theirs.x - ours.x);
         let back = heading + std::f64::consts::PI;
-        army(b, 0, ours, heading, &self.warband, Some(&Company::new(Kind::Captain, "CAPTAIN")), false);
+        let is_captain = |c: &&Company| b.tune.unit_kind(c.unit) == Kind::Captain;
+        let captain = self.warband.iter().find(is_captain).cloned().unwrap_or_else(|| Company::new(Kind::Captain, "CAPTAIN"));
+        let companies: Vec<Company> = self.warband.iter().filter(|c| !is_captain(c)).cloned().collect();
+        army(b, 0, ours, heading, &companies, Some(&captain), false);
         if self.mirror {
             army(b, 1, theirs, back, &self.garrison, self.general.as_ref(), true);
             return;
@@ -238,9 +255,17 @@ fn stations(b: &Battle, companies: &[Company]) -> Vec<((f64, f64), (f64, f64))> 
     lines.into_iter().zip(columns).collect()
 }
 
-/// Adds a company (its commander as soldier 0, with 3× hp) at `at`, every man in his slot. Returns its index.
+/// Adds a company (its commander as soldier 0, with 3× hp) at `at`, every man in his slot, with the men and the
+/// commander's hp it has as it stands (a campaign's). Returns its index.
 fn add(b: &mut Battle, team: Team, c: &Company, at: P, facing: f64, stations: ((f64, f64), (f64, f64))) -> usize {
-    spawn(b, team, c, at, facing, stations, None)
+    let i = spawn(b, team, c, at, facing, stations, c.men);
+    if let Some(hp) = c.hp
+        && let Some(&k) = b.squads[i].soldiers.first()
+    {
+        let m = &mut b.soldiers[k];
+        m.hp = hp.clamp(1.0, m.max_hp);
+    }
+    i
 }
 
 /// `add` during a battle (day 4's places: the ford's civilians and raiders, the night's relief, the freed), with
@@ -285,6 +310,7 @@ pub(super) fn spawn(b: &mut Battle, team: Team, c: &Company, at: P, facing: f64,
         column: stations.1,
         way: c.way,
         freed: c.freed,
+        face: c.face,
         reserve: None,
         working: false,
         commanded,

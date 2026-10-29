@@ -21,6 +21,7 @@ export class TypedLine {
   readonly canvas = document.createElement('canvas');
   private readonly ctx: CanvasRenderingContext2D;
   private drawn = '';
+  private readonly onKey = (e: KeyboardEvent) => this.key(e);
 
   constructor(
     private readonly view: View,
@@ -35,7 +36,14 @@ export class TypedLine {
     s.display = 'none';
     this.ctx = this.canvas.getContext('2d')!;
     document.body.appendChild(this.canvas);
-    window.addEventListener('keydown', (e) => this.key(e), { capture: true });
+    window.addEventListener('keydown', this.onKey, { capture: true });
+  }
+
+  /** Takes the line off the page: its canvas and its key listener. */
+  dispose(): void {
+    window.removeEventListener('keydown', this.onKey, { capture: true });
+    this.canvas.remove();
+    this.isOpen = false;
   }
 
   open(): void {

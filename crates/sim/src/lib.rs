@@ -3,6 +3,7 @@
 
 pub mod battle;
 pub mod bots;
+pub mod campaign;
 pub mod contracts;
 pub mod hash;
 pub mod land;

@@ -34,13 +34,17 @@ const NO_ORDERS: OrdersView = { captain: null, held: false, squads: [], army: []
 export interface BattleOpts {
   /** The commander bot plays our side. */
   pilot: boolean;
-  /** The enemy's bot: garrison, general0..2, charge, idle or none. */
+  /** The enemy's bot: garrison, general0..2, charge, idle or none; '' keeps the one the battle came with (a campaign's
+   * or a custom battle's own). */
   enemy: string;
+  /** The figure layer to draw with: the screens keep one for every scene, so its atlases and materials are made once
+   * (01-flow.md §8 Performance 1). A battle on its own makes its own. */
+  figures?: Figures;
 }
 
 export class BattleView {
   readonly clock = new Clock();
-  readonly figures = new Figures();
+  readonly figures: Figures;
   readonly records = new Records();
   readonly views: Views;
   readonly perf = new Perf();
@@ -62,6 +66,8 @@ export class BattleView {
   /** Events drained this frame, for whoever listens (sound comes later). */
   readonly listeners: ((e: SimEvent) => void)[] = [];
   outcome: { winner: number; why: string; tick: number } | null = null;
+  /** The sites' capture rings are drawn (off on the road, whose places draw themselves, screens/road.ts). */
+  showSites = true;
   /** A fog set by hand (the dev hook `__v.fog`), drawn and obeyed instead of the sim's until cleared. */
   fogOverride: Uint8Array | null = null;
   private pilotOn = false;
@@ -85,22 +91,42 @@ export class BattleView {
     opts: BattleOpts,
   ) {
     installFigureFog();
+    this.figures = opts.figures ?? new Figures();
     this.views = new Views(memory, sim);
     this.daySeconds = sim.day_s();
     this.ground = (x, y) => groundAt(view.land, x, y);
-    view.scene.add(this.figures.group);
+    if (this.figures.group.parent !== view.scene) view.scene.add(this.figures.group);
     this.marks = new Marks(view.land);
     view.scene.add(this.marks.group);
     this.orderMarks = new OrderMarks(this);
     this.marks.drawers.push(this.orderMarks.draw);
     view.beforeDraw = () => this.drawFigures();
     this.pilot(opts.pilot);
-    this.bot(opts.enemy);
+    if (opts.enemy) this.bot(opts.enemy);
+    else this.enemyBot = 'own';
     this.sync();
     this.build(0);
     this.readOrders();
     const cap = this.captain();
     if (cap) view.camera.focus.set(cap.x, cap.y);
+  }
+
+  /**
+   * Ends the battle on screen: its marks leave the scene (their geometries freed, their materials kept), the figures
+   * forget its men, the view's hooks are let go, and the sim is freed unless `keepSim` (the campaign reads it first).
+   */
+  dispose(keepSim = false): void {
+    this.view.scene.remove(this.marks.group);
+    this.marks.group.traverse((o) => (o as { geometry?: { dispose(): void } }).geometry?.dispose());
+    // a frame with nobody in it: the figure layer drops every man's drawn state, so the next scene's ids start afresh
+    this.figures.update({ men: [], banners: [], dt: 0, time: this.view.time, zoom: this.view.camera.s });
+    if (this.view.beforeDraw) this.view.beforeDraw = null;
+    this.listeners.length = 0;
+    this.view.grey = 0;
+    this.view.danger = 0;
+    this.view.nightK = 0;
+    this.view.lightN = 0;
+    if (!keepSim) this.sim.free();
   }
 
   /** The commander bot plays our side (on), or nobody does (off). */
@@ -243,7 +269,7 @@ export class BattleView {
   private readOrders(stepped = false): void {
     const before = this.orders;
     this.orders = JSON.parse(this.sim.orders_json(this.team)) as OrdersView;
-    this.sites = JSON.parse(this.sim.sites_json()) as SitesView;
+    this.sites = this.showSites ? (JSON.parse(this.sim.sites_json()) as SitesView) : { r: 1.8, sites: [] };
     if (this.squadInfo.length !== this.sim.squad_count()) this.squadInfo = JSON.parse(this.sim.squads_json()) as SquadInfo[];
     this.ordersTick = this.sim.tick();
     if (!stepped || before === NO_ORDERS) return;

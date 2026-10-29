@@ -181,6 +181,8 @@ pub struct Squad {
     pub way: Option<Way>,
     /// Freed men: the reserve.
     pub freed: bool,
+    /// The commander's look (a campaign's person), 0 to derive it from the id. Not hashed: it changes no rule.
+    pub face: u32,
     /// Held back as the reserve (08-orders.md §3): its station by the captain in line, (ahead, to the left).
     pub reserve: Option<(f64, f64)>,
     /// At work on a field work this tick: it cannot fight (08-orders.md §7).
@@ -390,7 +392,11 @@ pub struct Battle {
 
 impl Battle {
     pub fn new(seed: u32, opts: MapOpts, setup: &Setup, tune: Tune) -> Battle {
-        let map = map::generate(seed, opts);
+        Battle::on_map(seed, map::generate(seed, opts), setup, tune)
+    }
+
+    /// A battle on a map made elsewhere (the campaign's road, docs/spec/03-land.md §9).
+    pub fn on_map(seed: u32, map: BattleMap, setup: &Setup, tune: Tune) -> Battle {
         let tiles = map.tiles.len();
         let sites = map.sites.iter().map(|s| SiteState { owner: s.owner, progress: 0.0, by: None }).collect();
         let army = |p: P| Army { heading: 0.0, aim: 0.0, aim_from: p, formation: Formation::Line, halted: 0.0, marched: 0.0 };

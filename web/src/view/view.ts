@@ -28,7 +28,8 @@ export interface ViewOpts {
 export class View {
   readonly canvas = document.createElement('canvas');
   readonly renderer: PixelRenderer;
-  readonly camera: ViewCamera;
+  /** Made anew for each land (its bounds and ground are the land's); the renderer and scene persist. */
+  camera: ViewCamera;
   readonly scene = new THREE.Scene();
   readonly sun: Sun;
   /** Time of day, 0..1 of the battle's time limit. */
@@ -44,18 +45,61 @@ export class View {
   readonly lights = new Float32Array(MAX_LIGHTS * 4);
   lightN = 0;
 
-  constructor(parent: HTMLElement, readonly land: LandData, opts: ViewOpts) {
+  /** The land on show; `setLand` swaps it (the scene changes, the renderer and the materials stay). */
+  land: LandData;
+  /** The meshes of the land on show, and its painted ground. */
+  private landMeshes: THREE.Mesh[] = [];
+  private groundTex: THREE.Texture | null = null;
+
+  constructor(parent: HTMLElement, land: LandData, opts: ViewOpts) {
     this.canvas.style.display = 'block';
     parent.appendChild(this.canvas);
     this.renderer = new PixelRenderer(this.canvas, { px: opts.px, tier: opts.tier, range: FAR - NEAR });
-    this.camera = new ViewCamera((x, y) => groundAt(land, x, y), land);
     this.sun = new Sun(this.scene, SHADOW_MAP[opts.tier]);
+    this.land = land;
+    this.camera = new ViewCamera((x, y) => groundAt(land, x, y), land);
+    this.setLand(land);
+    this.resize();
+  }
+
+  /**
+   * Shows another land (a scene change, without a page reload): the old terrain, water and scatter leave the scene and
+   * their geometries and ground texture are freed; the materials are kept (01-flow.md §8 Performance 1). The camera
+   * is made anew over the new land, at its middle.
+   */
+  setLand(land: LandData): void {
+    if (land === this.land && this.landMeshes.length) {
+      // the same land again (the road after the muster): only the camera and the light start afresh
+      this.camera = new ViewCamera((x, y) => groundAt(land, x, y), land);
+      this.dayT = 0;
+      this.nightK = 0;
+      this.grey = 0;
+      this.danger = 0;
+      this.lightN = 0;
+      return;
+    }
+    for (const m of this.landMeshes) {
+      this.scene.remove(m);
+      // the scatter's shapes are shared by every land: only its instance buffers go; the terrain's and the water's
+      // geometries are this land's own
+      if (m instanceof THREE.InstancedMesh) m.dispose();
+      else m.geometry.dispose();
+    }
+    this.groundTex?.dispose();
+    this.land = land;
+    this.camera = new ViewCamera((x, y) => groundAt(land, x, y), land);
     const ground = groundTexture(land);
     const terrain = terrainMesh(land, ground);
     const normals = terrain.geometry.attributes.normal as THREE.BufferAttribute;
     resetFog(land.w, land.h, land, normalTexture(normals, land.ew * 2 + 1, land.eh * 2 + 1));
-    this.scene.add(terrain, waterMesh(land, ground), ...scatterMeshes(land.parts));
-    this.resize();
+    this.landMeshes = [terrain, waterMesh(land, ground), ...scatterMeshes(land.parts)];
+    this.groundTex = ground;
+    this.scene.add(...this.landMeshes);
+    this.dayT = 0;
+    this.nightK = 0;
+    this.grey = 0;
+    this.danger = 0;
+    this.lightN = 0;
   }
 
   resize(): void {

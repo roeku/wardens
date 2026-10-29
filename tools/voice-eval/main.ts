@@ -7,6 +7,8 @@
 //
 //   npm run voice-eval -- [--suite day1|08] [--mode prefill|chat] [--runs N] [--url http://127.0.0.1:8080]
 //                         [--temp 0] [--cold] [--cached] [--only 12,cat-name,...] [--label name]
+// A third suite, `--suite broodlord`, runs the enemy broodlord's brain on situations from harness battles
+// (06-voice.md §8; tools/voice-eval/broodlord.ts).
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
@@ -15,6 +17,7 @@ import { enums, stateText, type Field } from '../../web/src/voice/field.ts';
 import { understand, type Understood } from '../../web/src/voice/pipeline.ts';
 import type { Act, Resolved } from '../../web/src/voice/resolve.ts';
 import { ReplyCache, brainFor } from '../voice-cache.ts';
+import { broodlordEval } from './broodlord.ts';
 
 const DOCS = new URL('../../docs/voice-eval/', import.meta.url);
 const { values: args } = parseArgs({
@@ -28,6 +31,7 @@ const { values: args } = parseArgs({
     cached: { type: 'boolean', default: false },
     only: { type: 'string', default: '' },
     label: { type: 'string', default: '' },
+    set: { type: 'string', default: '' },
   },
 });
 
@@ -212,6 +216,9 @@ const pct = (xs: number[], p: number) => {
 };
 
 async function main(): Promise<void> {
+  if (args.suite === 'broodlord') {
+    return broodlordEval({ url: args.url!, temp: Number(args.temp), runs: args.runs ? Number(args.runs) : undefined, cached: !!args.cached, only: args.only ?? '', label: args.label ?? '', set: args.set ?? '' });
+  }
   const day1 = args.suite === 'day1';
   const suite = day1 ? json('cases.json') : json('cases-08.json');
   const field = json(day1 ? 'fixture.json' : suite.fixture) as Field & { stateText: string };

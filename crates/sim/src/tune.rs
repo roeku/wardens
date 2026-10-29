@@ -1336,11 +1336,40 @@ pub struct BotTune {
     pub raiders: RaidersTune,
     /// The mindless charge and the sensible commander think this often (chosen).
     pub charge_think_s: f64,
+    #[serde(default)]
+    pub intent: IntentTune,
 }
 
 impl Default for BotTune {
     fn default() -> BotTune {
-        BotTune { garrison: GarrisonTune::default(), general: GeneralTune::default(), quarry: QuarryTune::default(), raiders: RaidersTune::default(), charge_think_s: 1.0 }
+        BotTune {
+            garrison: GarrisonTune::default(),
+            general: GeneralTune::default(),
+            quarry: QuarryTune::default(),
+            raiders: RaidersTune::default(),
+            charge_think_s: 1.0,
+            intent: IntentTune::default(),
+        }
+    }
+}
+
+/// How the bots carry out the broodlord's intents between the brain's calls (06-voice.md §8; chosen, recorded in
+/// out/decisions-d5-broodlord.md).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct IntentTune {
+    /// An intent lapses this long after the brain last gave it, s: the bots' own plan takes the company back.
+    pub lapse_s: f64,
+    /// A company holding a place (or a place it took) attacks seen foes within this of it.
+    pub guard_r: f64,
+    /// When its foe breaks or falls, a company sent to attack takes the next seen foe within this of itself.
+    pub follow_r: f64,
+    /// A company holding a place it took goes back to it when farther than this.
+    pub hold_r: f64,
+}
+
+impl Default for IntentTune {
+    fn default() -> IntentTune {
+        IntentTune { lapse_s: 30.0, guard_r: 5.0, follow_r: 8.0, hold_r: 2.5 }
     }
 }
 
@@ -1369,6 +1398,9 @@ pub struct Tune {
     #[serde(default)]
     pub places: PlacesTune,
     pub bots: BotTune,
+    /// The campaign's numbers (01-flow §4), in their own table: crates/sim/src/campaign/tune.rs.
+    #[serde(default)]
+    pub campaign: crate::campaign::CampaignTune,
 }
 
 impl Tune {

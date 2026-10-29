@@ -124,6 +124,7 @@ function house(kit: Kit, roof: Kit, at: At, w: number, d: number, seed: number, 
 /** Paints a unit box's vertices one colour. */
 function paintedBox(color: number): THREE.BufferGeometry {
   const g = boxGeometry().clone();
+  g.userData = { shared: true };
   const n = g.attributes.position.count;
   const c = new THREE.Color(color);
   const col = new Float32Array(n * 3);
@@ -377,4 +378,108 @@ export function poseFlag(f: Flag, owner: number, progress: number, by: number, t
   f.cloth.position.set(f.foot.x + c * 0.17, y, f.foot.z - s * 0.17);
   f.cloth.rotation.set(0, sway, 0);
   f.mat.color.copy(cTmp.setHex(colourOf === 0 ? FLAG.ours : colourOf === 1 ? FLAG.blight : FLAG.neutral));
+}
+
+// ------------------------------------------------------------------------------------------- the road's own
+
+/** The camp (03-land.md §7): four ridge tents `roof(.78,.62,.55)` in canvas with poles, a ring of 7 stones, crossed
+ * sticks, a cart, and a fire in the centre. Returns the group and the fire's place (camp fires are 0xffa040). */
+export function buildCamp(base: THREE.Vector3, seed: number): { group: THREE.Group; fire: THREE.Vector3 } {
+  const kit = new Kit();
+  const at = (x: number, y: number, z: number, turn = 0): At => ({ x: base.x + x, y: base.y + y, z: base.z + z, turn });
+  const tents: [number, number, number][] = [[-0.95, -0.7, 0.2], [0.85, -0.85, -0.3], [-0.9, 0.85, -0.15], [0.95, 0.75, 0.35]];
+  tents.forEach(([x, z, turn], k) => {
+    const t = turn + (r01(seed, 30 + k) - 0.5) * 0.3;
+    kit.roof(0.78, 0.62, 0.55, at(x, 0, z, t), CANVAS[k & 1], false, false);
+    // the poles at the ridge's ends
+    const c = Math.cos(t), s = Math.sin(t);
+    for (const e of [-0.42, 0.42]) kit.box(0.035, 0.62, 0.035, at(x + e * c, 0, z + e * s), WOOD[0]);
+  });
+  // a ring of 7 stones round the fire, and crossed sticks over it
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
+    kit.box(0.09, 0.06, 0.09, at(Math.cos(a) * 0.24, 0, Math.sin(a) * 0.24, a), STONE[1 + (i % 2)]);
+  }
+  kit.box(0.04, 0.04, 0.3, at(0, 0.02, 0, 0.7), WOOD[0]).box(0.04, 0.04, 0.3, at(0, 0.02, 0, -0.7), WOOD[0]);
+  // a cart: a bed on two wheels, its shafts down
+  kit.box(0.6, 0.12, 0.38, at(0.1, 0.16, 1.45, 0.15), WOOD[2]);
+  kit.cyl(0.15, 0.05, { ...at(0.1, 0.01, 1.24, 0.15) }, WOOD[0], 8).cyl(0.15, 0.05, at(0.1, 0.01, 1.66, 0.15), WOOD[0], 8);
+  kit.beam(0.5, 0.03, 0.03, at(-0.42, 0.06, 1.38, 0.15), 0.25, WOOD[1]);
+  const group = new THREE.Group();
+  group.name = 'camp';
+  group.add(mesh(kit.build().body!, bodyMaterial(), 'camp-body'));
+  return { group, fire: new THREE.Vector3(base.x, base.y + 0.04, base.z) };
+}
+
+/** The Hall of Banners (03-land.md §7): a long timbered house 2.5×1.05 with walls 0.8 high under an owned roof
+ * `(2.75, 1.3, .95)`, door posts, and a stone brazier with a fire. Returns the place view and the brazier's fire. */
+export function buildHall(base: THREE.Vector3, seed: number): { place: PlaceView; fire: THREE.Vector3 } {
+  const body = new Kit();
+  const own = new Kit();
+  const at = (x: number, y: number, z: number, turn = 0): At => ({ x: base.x + x, y: base.y + y, z: base.z + z, turn });
+  const W = 2.5, D = 1.05, H = 0.8;
+  body.box(W, H, D, at(0, 0, 0), PLASTER[seed & 1]);
+  const t = 0.04;
+  // timbers on the two walls the camera sees: sills, a mid rail, the plate, posts every half metre or so
+  for (const y of [0, 0.45 * H, H - t]) {
+    body.box(W + t, t, t, at(0, y, D / 2 + t / 2), BEAM);
+    body.box(t, t, D + t, at(-W / 2 - t / 2, y, 0), BEAM);
+  }
+  for (let i = 0; i <= 5; i++) body.box(t, H, t, at(-W / 2 + (i * W) / 5, 0, D / 2 + t / 2), BEAM);
+  for (const z of [-D / 2, 0, D / 2]) body.box(t, H, t, at(-W / 2 - t / 2, 0, z), BEAM);
+  // the door, its posts, and windows
+  body.box(0.26, 0.5, 0.02, at(0.2, 0, D / 2 + 0.015), WINDOW);
+  body.box(0.06, 0.62, 0.06, at(0.02, 0, D / 2 + 0.06), WOOD[0]).box(0.06, 0.62, 0.06, at(0.38, 0, D / 2 + 0.06), WOOD[0]);
+  body.box(0.46, 0.06, 0.08, at(0.2, 0.62, D / 2 + 0.06), WOOD[1]);
+  for (const x of [-0.85, -0.4, 0.8]) body.box(0.14, 0.12, 0.02, at(x, 0.5, D / 2 + 0.015), WINDOW);
+  own.roof(2.75, 1.3, 0.95, at(0, H, 0), 0, true, false);
+  // the brazier before the door
+  body.cyl(0.14, 0.42, at(0.2, 0, D / 2 + 0.75), STONE[2], 8);
+  body.cyl(0.2, 0.08, at(0.2, 0.42, D / 2 + 0.75), STONE[3], 8);
+  const group = new THREE.Group();
+  group.name = 'hall';
+  group.add(mesh(body.build().body!, bodyMaterial(), 'hall-body'));
+  const o = ownedMaterial();
+  group.add(mesh(own.build().owned!, o.mat, 'hall-owned'));
+  const flag = placeFlag(group, new THREE.Vector3(base.x - W / 2 - 0.3, base.y, base.z + D / 2 + 0.2), 1.6);
+  const place: PlaceView = { site: -1, kind: -1, group, owned: { ...o, neutral: THATCH[1] }, flag, flame: null, houses: [] };
+  return { place, fire: new THREE.Vector3(base.x + 0.2, base.y + 0.5, base.z + D / 2 + 0.75) };
+}
+
+/** Cairn stones (03-land.md §7 "Campaign props"): 3 stacked dodecahedra of scale 0.13 − 0.03k, the top one paler. */
+export const CAIRN = [0x7d766b, 0x9a9384] as const;
+
+/** A cairn at world `base` into `kit`. */
+export function cairn(kit: Kit, base: THREE.Vector3, seed: number): void {
+  let y = 0;
+  for (let k = 0; k < 3; k++) {
+    const s = 0.13 - 0.03 * k;
+    const jx = (r01(seed, 50 + k) - 0.5) * 0.04;
+    kit.cone(s, s * 1.4, { x: base.x + jx, y: base.y + y, z: base.z + jx, turn: r01(seed, 60 + k) * 3 }, k === 2 ? CAIRN[1] : CAIRN[0], false, 5);
+    y += s * 1.1;
+  }
+}
+
+/** Honour ribbons, cream and red in turn (02-look.md §4). */
+const RIBBON = [0xf3ecd8, 0xd8463a] as const;
+
+/**
+ * A planted banner (03-land.md §7): a pole 1.3 tall carrying a 0.44 × 0.72 cloth and up to 6 honour ribbons, leaning
+ * by `lean` (±0.15 rad). `cloth`: its colour (the warband's blue, or an enemy's colours). Into `kit`.
+ */
+export function plantedBanner(kit: Kit, base: THREE.Vector3, lean: number, cloth: number, ribbons: number, edge: number): void {
+  const H = 1.3;
+  // the pole leans in the plane facing the camera: a tilted beam, its foot at the base
+  const dx = Math.sin(lean) * (H / 2), dy = Math.cos(lean) * (H / 2);
+  kit.beam(0.04, H, 0.04, { x: base.x + dx * Math.SQRT1_2, y: base.y + dy - H / 2, z: base.z + dx * Math.SQRT1_2, turn: Math.PI / 4 }, -lean, WOOD[0]);
+  const tx = base.x + Math.sin(lean) * H * Math.SQRT1_2, tz = base.z + Math.sin(lean) * H * Math.SQRT1_2, ty = base.y + Math.cos(lean) * H;
+  // the crossbar and the cloth hanging from it, square to the camera
+  kit.box(0.5, 0.04, 0.04, { x: tx, y: ty - 0.06, z: tz, turn: Math.PI / 4 }, WOOD[1]);
+  kit.box(0.44, 0.72, 0.03, { x: tx + 0.02, y: ty - 0.8, z: tz + 0.02, turn: Math.PI / 4 }, cloth);
+  kit.box(0.46, 0.05, 0.035, { x: tx + 0.02, y: ty - 0.1, z: tz + 0.02, turn: Math.PI / 4 }, edge);
+  for (let i = 0; i < Math.min(6, ribbons); i++) {
+    const side = i % 2 ? 1 : -1;
+    const off = side * (0.25 + Math.floor(i / 2) * 0.05);
+    kit.box(0.03, 0.34, 0.02, { x: tx + off * Math.SQRT1_2, y: ty - 0.42, z: tz + off * Math.SQRT1_2, turn: Math.PI / 4 }, RIBBON[i % 2]);
+  }
 }

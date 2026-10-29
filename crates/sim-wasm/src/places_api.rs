@@ -185,6 +185,7 @@ impl Battle {
             MapKind::Town => "town",
             MapKind::Ford => "ford",
             MapKind::Field => "field",
+            MapKind::Road => "road",
         };
         let houses: Vec<_> = b.places.houses.iter().map(|h| json!({ "at": p(h.at), "w": h.size.0, "d": h.size.1 })).collect();
         let ford = b.places.ford.as_ref().map(|f| {

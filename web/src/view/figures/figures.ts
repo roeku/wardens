@@ -104,12 +104,14 @@ export class Figures {
         strikeT: Infinity,
         look: outfit(rec),
         lookKey: key,
+        faceSeed: rec.faceSeed ?? 0,
         at: { x: 0, y: 0, z: 0, px: 0, py: 0 },
       };
       this.states.set(rec.id, st);
-    } else if (st.lookKey !== key) {
+    } else if (st.lookKey !== key || st.faceSeed !== (rec.faceSeed ?? 0)) {
       st.look = outfit(rec);
       st.lookKey = key;
+      st.faceSeed = rec.faceSeed ?? 0;
     }
     return st;
   }

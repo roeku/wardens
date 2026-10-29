@@ -10,9 +10,11 @@
 import type { BattleView } from '../../battle/battle';
 import type { Deed, P, Source } from '../../contracts';
 import { armyHorn, callFor, companyHorn, queryHorn, rallyHorn, type Ear } from '../../sound/horns';
-import { onCaptainHold } from '../../input/hooks';
+import { inputHooks, onCaptainHold, type HoldPhase } from '../../input/hooks';
 import { bindUnlock } from '../../sound/audio';
-import { MARK } from '../../view/marks';
+import { MARK, type Pen } from '../../view/marks';
+import { brainLock } from '../brain';
+import { broodlordFromUrl } from '../broodlord';
 import { stateText, type Field, type FieldGroup, type FieldWaiting } from '../field';
 import { understand, type Understood } from '../pipeline';
 import type { Resolved } from '../resolve';
@@ -101,6 +103,17 @@ export class Voice {
   private nextRun = 0;
   /** A field read when the typed line opened (the brain reads it while the captain types). */
   private typedField: LiveField | null = null;
+  /** The voice's claim on the brain while the captain holds (the broodlord gives way, brain.ts `brainLock`). */
+  private claim: (() => void) | null = null;
+  /** Taken off the battle: no more holds, runs or drawing. */
+  disposed = false;
+  private readonly ring = (pen: Pen) => {
+    const cap = this.hold ? this.play.captain() : null;
+    if (!cap) return;
+    const level = this.hold?.level ? this.hold.level() : this.mic.level;
+    const pulse = LISTEN_PULSE * Math.sin((performance.now() / 1000) * 7);
+    pen.ring(cap, LISTEN_R + LISTEN_GROW * level + pulse, { colour: MARK.gold, width: LISTEN_W, alpha: 0.55 + 0.45 * level });
+  };
 
   constructor(
     readonly play: BattleView,
@@ -108,13 +121,7 @@ export class Voice {
   ) {
     this.brains = new Brains(opts.brain, opts.abandonMs);
     // the listening ring: a mark on the field, drawn with the battle's own marks (02-look.md §7)
-    play.marks.drawers.push((pen) => {
-      const cap = this.hold ? this.play.captain() : null;
-      if (!cap) return;
-      const level = this.hold?.level ? this.hold.level() : this.mic.level;
-      const pulse = LISTEN_PULSE * Math.sin((performance.now() / 1000) * 7);
-      pen.ring(cap, LISTEN_R + LISTEN_GROW * level + pulse, { colour: MARK.gold, width: LISTEN_W, alpha: 0.55 + 0.45 * level });
-    });
+    play.marks.drawers.push(this.ring);
     this.typed = new TypedLine(
       play.view,
       {
@@ -159,9 +166,12 @@ export class Voice {
     return this.hold !== null;
   }
 
-  /** The captain starts to speak: slow time, the ring, the mic (unless a file stands in), warm the ears and brain. */
+  /** The captain starts to speak: slow time, the ring, the mic (unless a file stands in), warm the ears and brain.
+   * The broodlord's brain call, if one is running, gives way. */
   begin(source: string, level?: () => number): boolean {
-    if (this.hold || this.typed.isOpen) return false;
+    if (this.hold || this.typed.isOpen || this.disposed) return false;
+    this.claim?.();
+    this.claim = brainLock.claim();
     const field = this.field();
     this.hold = { field, source, level, started: performance.now() };
     warmStt();
@@ -170,10 +180,16 @@ export class Voice {
       this.mic.start().catch((e) => {
         console.warn('[voice] no microphone:', e instanceof Error ? e.message : e);
         this.hold = null;
+        this.unclaim();
         this.refuse(null, 'no microphone');
       });
     }
     return true;
+  }
+
+  private unclaim(): void {
+    this.claim?.();
+    this.claim = null;
   }
 
   /** The captain stops speaking: the hold's audio goes down the release path. `audio` stands in for the mic. */
@@ -182,19 +198,35 @@ export class Voice {
     if (!hold) return null;
     this.hold = null;
     const released = performance.now();
-    const wav = audio ?? (await this.mic.stop());
-    if (!wav) {
-      this.refuse(null, 'nothing heard');
-      return null;
+    try {
+      const wav = audio ?? (await this.mic.stop());
+      if (!wav) {
+        this.refuse(null, 'nothing heard');
+        return null;
+      }
+      return await this.run({ audio: wav, src: 'voice', field: hold.field, released });
+    } finally {
+      if (!this.hold) this.unclaim();
     }
-    return this.run({ audio: wav, src: 'voice', field: hold.field, released });
   }
 
   /** Lets go of a hold without giving an order (the hold turned into something else). */
   cancel(): void {
     if (!this.hold) return;
     this.hold = null;
+    this.unclaim();
     void this.mic.stop();
+  }
+
+  /** Takes voice off this battle (the scene ends): the ring, the typed line, the hold and the brain's claim. */
+  dispose(): void {
+    if (this.disposed) return;
+    this.cancel();
+    this.disposed = true;
+    this.typed.dispose();
+    const i = this.play.marks.drawers.indexOf(this.ring);
+    if (i >= 0) this.play.marks.drawers.splice(i, 1);
+    this.unclaim();
   }
 
   // ------------------------------------------------------------------------------------------- the release path
@@ -204,6 +236,8 @@ export class Voice {
     const { field, src, released } = input;
     const key = this.nextRun++;
     this.inflight.set(key, released);
+    // the broodlord gives way once the words need the brain (not for the fast path), until they have landed
+    const claim: { release?: () => void } = {};
     const u: Utterance = { src, said: input.text ?? '', heard: '', path: '', brain: '', reply: null, deeds: [], refused: [], unclear: false, tick: 0, e2e: 0, field: stateText(field) };
     try {
       if (input.audio) {
@@ -224,6 +258,7 @@ export class Voice {
       let understood: Understood;
       try {
         understood = await understand(field, u.said, this.brains.choice === 'off' ? undefined : async (heard) => {
+          claim.release ??= brainLock.claim();
           const a = await this.brains.ask(field, heard);
           brainMs = a.ms;
           brain = a.brain;
@@ -251,6 +286,7 @@ export class Voice {
       this.land(field, understood, u, released);
       return u;
     } finally {
+      claim.release?.();
       this.inflight.delete(key);
     }
   }
@@ -394,6 +430,7 @@ export class Voice {
 
   /** Called just before every draw: the clock and the typed line. */
   frame(): void {
+    if (this.disposed) return;
     const released = [...this.inflight.values()].some((t) => performance.now() - t < SLOW_AFTER_MS);
     this.play.clock.listening = this.hold !== null || this.typed.isOpen || released;
     this.typed.draw();
@@ -404,7 +441,11 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   return Promise.race([p, new Promise<T>((_, no) => setTimeout(() => no(new Error(`${what} took over ${ms} ms`)), ms))]);
 }
 
-/** Puts voice into the live battle: V to talk, Enter to type, the captain hold, and the dev hooks. */
+/**
+ * Puts voice into the live battle: V to talk, Enter to type, the captain hold, and the dev hooks. Returns the voice,
+ * whose `dispose()` takes it all off again (the scene ends; the next battle installs its own). With
+ * `?broodlord=<way>`, the broodlord's mind comes with it on a battle whose scene gives no foe (the dev path).
+ */
 export function installVoice(play: BattleView): Voice {
   const params = new URLSearchParams(location.search);
   const brain = (params.get('brain') ?? 'local') as BrainChoice;
@@ -415,27 +456,46 @@ export function installVoice(play: BattleView): Voice {
   });
   bindUnlock();
   const prev = play.view.beforeDraw;
-  play.view.beforeDraw = () => {
+  const draw = () => {
     prev?.();
     voice.frame();
   };
-  window.addEventListener('keydown', (e) => {
+  play.view.beforeDraw = draw;
+  const down = (e: KeyboardEvent) => {
     if (e.code === 'KeyV' && !e.repeat && !e.metaKey && !e.ctrlKey) voice.begin('key');
-  });
-  window.addEventListener('keyup', (e) => {
+  };
+  const up = (e: KeyboardEvent) => {
     if (e.code === 'KeyV') void voice.end();
-  });
-  window.addEventListener('blur', () => void voice.end());
+  };
+  const blur = () => void voice.end();
+  window.addEventListener('keydown', down);
+  window.addEventListener('keyup', up);
+  window.addEventListener('blur', blur);
   // the input layer's 400 ms still-press on the captain (01-flow.md §2)
-  onCaptainHold((phase) => (phase === 'start' ? voice.begin('captain') : void voice.end()));
+  const hold = (phase: HoldPhase) => (phase === 'start' ? voice.begin('captain') : void voice.end());
+  onCaptainHold(hold);
   // the brain reads the rules and the field once the battle is on screen, so the first order is not the slow one (a
   // tab in the background never does: it would push the playing tab's field out of the voice slot)
   const warmIfSeen = () => {
-    if (document.visibilityState === 'visible') void voice.brains.warm(voice.field());
+    if (document.visibilityState === 'visible' && !voice.disposed) void voice.brains.warm(voice.field());
   };
   warmIfSeen();
   document.addEventListener('visibilitychange', warmIfSeen);
   if (import.meta.env.DEV) installVoiceDev(voice);
+  const brood = broodlordFromUrl(play);
+  const dispose = voice.dispose.bind(voice);
+  voice.dispose = () => {
+    if (voice.disposed) return;
+    dispose();
+    brood?.dispose();
+    window.removeEventListener('keydown', down);
+    window.removeEventListener('keyup', up);
+    window.removeEventListener('blur', blur);
+    document.removeEventListener('visibilitychange', warmIfSeen);
+    if (inputHooks.onCaptainHold === hold) inputHooks.onCaptainHold = () => {};
+    // the draw hook goes back to what it was, unless another part has wrapped it since (then `frame` is a no-op)
+    if (play.view.beforeDraw === draw) play.view.beforeDraw = prev;
+  };
   return voice;
 }
 
@@ -469,9 +529,18 @@ function installVoiceDev(voice: Voice): void {
       await new Promise((ok) => setTimeout(ok, opts.holdMs ?? seconds * 1000));
       return voice.end(new Blob([buf], { type: 'audio/wav' }));
     },
-    /** Words through the typed path (or `src` 'voice' to log them as spoken). */
-    voiceText(text: string, src: Source = 'typed'): Promise<Utterance> {
+    /** Words through the typed path (or `src` 'voice' to log them as spoken), as the typed line gives them: the field
+     * is read into the brain first, as it is while the captain types (`{cold: true}` skips that). */
+    async voiceText(text: string, src: Source = 'typed', opts: { cold?: boolean } = {}): Promise<Utterance> {
       const field = voice.field();
+      if (!opts.cold && voice.brains.choice !== 'off') {
+        const release = brainLock.claim();
+        try {
+          await voice.brains.warm(field);
+        } finally {
+          release();
+        }
+      }
       return voice.run({ text, src, field, released: performance.now() });
     },
     /** Starts or ends a hold by hand (the real mic). */

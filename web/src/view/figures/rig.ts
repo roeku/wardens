@@ -82,6 +82,8 @@ export interface FigState {
   strikeT: number;
   look: Look;
   lookKey: number;
+  /** The face seed the look was made with (ManRecord.faceSeed). */
+  faceSeed: number;
   /** Where he was drawn last, snapped (world), for picking and checks. */
   at: Snapped;
 }
@@ -366,7 +368,7 @@ export function poseMan(c: RigCtx, st: FigState, rec: ManRecord): void {
   emit(c, 'head', ROOT, HEADM, L.skin, flash, tpu);
   if (c.zoom >= FACE_ZOOM) emit(c, 'face', ROOT, HEADM, L.skin, flash, tpu);
   const hooded = L.head === 'hood' || L.head === 'kerchief' || L.head === 'coif+nasal';
-  if (!hooded) emit(c, 'hair', ROOT, HEADM, L.hair, flash, tpu);
+  if (!hooded && !L.bald) emit(c, 'hair', ROOT, HEADM, L.hair, flash, tpu);
   if (L.beard >= 0 && L.head !== 'coif+nasal') emit(c, `beard${L.beard}` as PartId, ROOT, HEADM, L.hair, flash, tpu);
   let plumeY = 0.128;
   switch (L.head) {

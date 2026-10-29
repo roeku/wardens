@@ -1,6 +1,8 @@
 //! Thin wasm-bindgen wrapper around `sim` (docs/engine/ENGINE.md): the battle with its bots, the packed per-frame
 //! buffers and event ring the view reads without a copy (`frame`), and the land. Campaign comes later.
 
+mod broodlord_api;
+mod campaign_api;
 mod compat;
 mod frame;
 mod input_api;

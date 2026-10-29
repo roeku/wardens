@@ -3,6 +3,10 @@ import { SQUAD_F32, SQUAD_STATE, squadBits, squadUnit, KIND_ORDER, type Deed, ty
 import { inputHooks, type Input } from './input';
 import { FWD, PITCH, ZOOMS } from './view/camera';
 import { FOG_NEVER, FOG_SEEN, FOG_SIGHT } from './view/fog';
+import type { App } from './screens/app';
+import * as simPkg from './sim-pkg/sim_wasm.js';
+import { autoCampaign, autoMuster } from './screens/auto';
+import type { Flow } from './screens/flow';
 import type { View } from './view/view';
 
 // window.__v: the eyes an agent uses (docs/spec/00-start-here.md §A5). Dev builds only.
@@ -85,23 +89,32 @@ function pointer(view: View, type: string, x: number, y: number, o: { id?: numbe
 
 const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 
-export function installDev(view: View, battle: BattleView, input?: Input): void {
+export function installDev(app: App, flow: Flow): void {
+  const view = app.view;
+  /** The battle on screen: the scene's (a battle, the road's peaceful one, the title's field). */
+  const B = (): BattleView => {
+    const p = app.scene?.play;
+    if (!p) throw new Error('no battle on screen');
+    return p;
+  };
+  /** The battle's input, while it takes orders. */
+  const inp = (): Input | undefined => (app.scene as { input?: Input | null } | null)?.input ?? undefined;
   /** Each company: id, team, kind, unit, state, men alive / full, morale (0..1 of max), anchor; and the outcome. */
   function battleState() {
-    const sim = battle.sim;
-    battle.views.refresh();
+    const sim = B().sim;
+    B().views.refresh();
     const q = sim.squad_count();
     const squads = [];
     for (let j = 0; j < q; j++) {
-      const w = battle.views.squadU32[j];
+      const w = B().views.squadU32[j];
       const o = j * SQUAD_F32.FIELDS;
-      const f = battle.views.squadF32;
+      const f = B().views.squadF32;
       squads.push({
         id: j,
         name: sim.squad_name(j),
         team: squadBits.team(w),
         kind: KIND_ORDER[squadBits.kind(w)],
-        unit: squadUnit(battle.views.squadUnit[j]),
+        unit: squadUnit(B().views.squadUnit[j]),
         state: SQUAD_STATE[squadBits.state(w)],
         men: `${squadBits.alive(w)}/${squadBits.full(w)}`,
         morale: Math.round(f[o + SQUAD_F32.MORALE] * 100) / 100,
@@ -112,25 +125,65 @@ export function installDev(view: View, battle: BattleView, input?: Input): void 
     return {
       tick: sim.tick(),
       seconds: Math.round((sim.tick() / 30) * 10) / 10,
-      bots: battle.bots,
-      clock: { slow: battle.clock.slow, fast: battle.clock.fast, paused: battle.clock.paused },
-      drawn: { men: battle.records.men.length, banners: battle.records.banners.length, hidden: battle.records.hidden },
-      outcome: outcome ? JSON.parse(outcome) : battle.outcome,
+      bots: B().bots,
+      clock: { slow: B().clock.slow, fast: B().clock.fast, paused: B().clock.paused },
+      drawn: { men: B().records.men.length, banners: B().records.banners.length, hidden: B().records.hidden },
+      outcome: outcome ? JSON.parse(outcome) : B().outcome,
       squads,
     };
   }
 
   const v = {
     view,
-    battle,
+    app,
+    flow,
+    /** The sim's bindings (Battle, Campaign), as the page loaded them. */
+    sim: simPkg,
+    // ------------------------------------------------------------------------------- the screens (day 5)
+    /** The scene on screen: top level, name, and the campaign's phase. */
+    scene() {
+      return { top: app.top, name: app.scene?.name ?? null, phase: app.phase(), fading: app.fading };
+    },
+    /** 01-flow.md §5: every banner given its best company (the muster on screen re-reads it). */
+    autoMuster: () => autoMuster(app),
+    /**
+     * Plays a whole campaign through the real scenes to the Hall: the muster, the marches, every battle piloted and
+     * fast-forwarded, an honour at every camp, the chronicle. Returns what happened and the errors counted.
+     */
+    autoCampaign: (opts?: Parameters<typeof autoCampaign>[2]) => autoCampaign(app, flow, opts),
+    /**
+     * Runs `frames` whole frames of the scene on screen back to back (the scene, the render, its layers), waiting for
+     * the GPU after each; returns the frame-time stats (ms) and the scene's name.
+     */
+    benchScene({ frames = 300, dt = 1 / 60 } = {}) {
+      const ctx = view.renderer.gl.getContext();
+      const px = new Uint8Array(4);
+      const times: number[] = [];
+      for (let i = 0; i < frames; i++) {
+        const t0 = performance.now();
+        app.step(dt);
+        ctx.readPixels(0, 0, 1, 1, ctx.RGBA, ctx.UNSIGNED_BYTE, px);
+        times.push(performance.now() - t0);
+      }
+      times.sort((a, b) => a - b);
+      const q = (k: number) => Math.round(times[Math.min(times.length - 1, Math.floor(k * times.length))] * 100) / 100;
+      return { scene: app.scene?.name, frames, p50: q(0.5), p90: q(0.9), p99: q(0.99), max: q(1), size: { ...view.renderer.size } };
+    },
+    /** The battle on screen (the scene's), or the last one. */
+    get battle(): BattleView {
+      return B();
+    },
     /** The commander bot plays our side (on), or nobody does (off). */
     pilot(on = true): boolean {
-      battle.pilot(on);
+      // it holds for the battles that follow too (a campaign's next battle starts piloted)
+      app.pilot = on;
+      const p = app.scene?.play;
+      if (p && app.scene?.name !== 'road' && app.scene?.name !== 'camp') p.pilot(on);
       return on;
     },
     /** The enemy's bot: garrison, general0..2, charge, idle or none. */
     bot(kind: string): string {
-      battle.bot(kind);
+      B().bot(kind);
       return kind;
     },
     /**
@@ -138,51 +191,51 @@ export function installDev(view: View, battle: BattleView, input?: Input): void 
      * shows where everyone is. Returns the tick reached and how long the stepping took.
      */
     ff(ticks: number): { tick: number; ms: number } {
-      const ms = battle.fastForward(ticks);
-      battle.settle();
+      const ms = B().fastForward(ticks);
+      B().settle();
       view.render();
-      return { tick: battle.sim.tick(), ms: Math.round(ms * 10) / 10 };
+      return { tick: B().sim.tick(), ms: Math.round(ms * 10) / 10 };
     },
     /**
      * Fast-forwards in steps of `chunk` ticks until `test(battle_state())` holds or `max` ticks have passed, e.g.
      * `__v.ffUntil(s => s.squads.some(q => q.state === 'fighting'))`. Returns the tick reached and whether it held.
      */
     ffUntil(test: (s: ReturnType<typeof battleState>) => boolean, max = 9000, chunk = 15): { tick: number; held: boolean } {
-      const end = battle.sim.tick() + max;
+      const end = B().sim.tick() + max;
       let held = test(battleState());
-      while (!held && battle.sim.tick() < end) {
-        battle.fastForward(chunk);
+      while (!held && B().sim.tick() < end) {
+        B().fastForward(chunk);
         held = test(battleState());
       }
-      battle.settle();
+      B().settle();
       view.render();
-      return { tick: battle.sim.tick(), held };
+      return { tick: B().sim.tick(), held };
     },
     pause(on = true): boolean {
-      battle.setPaused(on);
+      B().setPaused(on);
       view.render();
       return on;
     },
     /** Stops every clock like a pause, without the pause's grey: for shots and the shimmer test. */
     freeze(on = true): boolean {
-      battle.clock.paused = on;
+      B().clock.paused = on;
       view.render();
       return on;
     },
     fast(on = true): boolean {
-      battle.clock.fast = on;
+      B().clock.fast = on;
       return on;
     },
     /** Follow the captain again (F). */
     follow(on = true): boolean {
-      battle.follow = on;
+      B().follow = on;
       return on;
     },
     /** Each company: id, team, kind, state, men alive / full, morale (0..1 of max), anchor; and the outcome. */
     battle_state: battleState,
     /** The sim's own text description (as the harness's `look`). */
     describe(): string {
-      return battle.sim.describe();
+      return B().sim.describe();
     },
     /**
      * Runs `frames` game frames back to back at `dt` (the sim, records, figures and render as in the frame loop),
@@ -193,29 +246,46 @@ export function installDev(view: View, battle: BattleView, input?: Input): void 
       if (w && h) r.resize(w, h);
       const ctx = r.gl.getContext();
       const px = new Uint8Array(4);
-      battle.perf.reset();
+      B().perf.reset();
       for (let i = 0; i < frames; i++) {
-        battle.frame(dt);
-        if (!battle.clock.paused) view.time += dt;
+        B().frame(dt);
+        if (!B().clock.paused) view.time += dt;
         view.render();
-        battle.perf.mark('render');
+        B().perf.mark('render');
         ctx.readPixels(0, 0, 1, 1, ctx.RGBA, ctx.UNSIGNED_BYTE, px);
-        battle.perf.mark('gpu');
-        battle.perf.end();
+        B().perf.mark('gpu');
+        B().perf.end();
       }
-      const out = { ...battle.perf.report(), drawn: battle.figures.stats(), size: { ...r.size } };
+      const out = { ...B().perf.report(), drawn: B().figures.stats(), size: { ...r.size } };
       if (w && h) view.resize();
       return out;
     },
     /** Frame-time stats (ms) over the last 600 frames: sim step, records, figures, render, total, frame interval. */
     perf(reset = false) {
-      if (reset) battle.perf.reset();
-      return { ...battle.perf.report(), drawn: battle.figures.stats() };
+      if (reset) B().perf.reset();
+      return { ...B().perf.report(), drawn: B().figures.stats() };
     },
     /** Renders a frame and saves it to out/shots/<name>.png through the dev server. */
     async shot(name: string): Promise<string> {
-      view.render();
-      const blob = await new Promise<Blob | null>((ok) => view.canvas.toBlob(ok, 'image/png'));
+      // a frame of 0 s (the scene, the render, its pixel layers, the cards and the fade), then every layer over the
+      // scene's picture, each scaled up by whole pixels as the page shows it
+      app.step(0);
+      const gl = view.canvas;
+      const out = document.createElement('canvas');
+      out.width = gl.width;
+      out.height = gl.height;
+      const c = out.getContext('2d')!;
+      c.imageSmoothingEnabled = false;
+      c.drawImage(gl, 0, 0);
+      const css = gl.getBoundingClientRect();
+      const k = css.width > 0 ? gl.width / css.width : 1;
+      const layers = [...document.querySelectorAll('canvas')].filter((e) => e !== gl && e.style.display !== 'none' && e.style.position === 'fixed');
+      layers.sort((a, b) => Number(a.style.zIndex || 0) - Number(b.style.zIndex || 0));
+      for (const l of layers) {
+        const r = l.getBoundingClientRect();
+        c.drawImage(l, (r.left - css.left) * k, (r.top - css.top) * k, r.width * k, r.height * k);
+      }
+      const blob = await new Promise<Blob | null>((ok) => out.toBlob(ok, 'image/png'));
       if (!blob) throw new Error('no frame');
       const res = await fetch(`/__shot?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob });
       return ((await res.json()) as { path: string }).path;
@@ -229,7 +299,7 @@ export function installDev(view: View, battle: BattleView, input?: Input): void 
     },
     /** Looks at (x, y) and stops following the captain. */
     focus(x: number, y: number): void {
-      battle.follow = false;
+      B().follow = false;
       view.camera.focus.set(x, y);
       view.render();
     },
@@ -255,7 +325,7 @@ export function installDev(view: View, battle: BattleView, input?: Input): void 
             : FOG_SIGHT;
         }
       }
-      battle.overrideFog(kind === 'sight' ? null : levels);
+      B().overrideFog(kind === 'sight' ? null : levels);
       view.render();
     },
     grey(on: boolean): void {
@@ -268,29 +338,31 @@ export function installDev(view: View, battle: BattleView, input?: Input): void 
       return { px, dpr, aw, ah, zoom: c.s, focus: [c.focus.x, c.focus.y], sub: [c.sub.x, c.sub.y], origin: [c.origin.x, c.origin.y] };
     },
     // ------------------------------------------------------------------------------- input and marks (day 4)
-    input,
+    get input(): Input | undefined {
+      return inp();
+    },
     /** The hooks the input calls (voice's captain hold, mute). */
     hooks: inputHooks,
     /** The client point of sim ground point (x, y) as last drawn. */
     toScreen(x: number, y: number): { x: number; y: number } {
       const r = view.canvas.getBoundingClientRect();
-      const p = input!.screen.project(x, battle.groundH(x, y), y, { x: 0, y: 0 });
+      const p = inp()!.screen.project(x, B().groundH(x, y), y, { x: 0, y: 0 });
       return { x: p.x + r.left, y: p.y + r.top };
     },
     /** Soldier `id` as drawn: his feet and the top of his head in client points, his company and team. */
     man(id: number) {
-      const at = battle.figures.drawnAt(id);
-      const rec = battle.records.men.find((m) => m.id === id);
+      const at = B().figures.drawnAt(id);
+      const rec = B().records.men.find((m) => m.id === id);
       if (!at || !rec) return null;
       const r = view.canvas.getBoundingClientRect();
-      const s = input!.screen;
+      const s = inp()!.screen;
       const feet = s.fromArt(at.px, at.py, { x: 0, y: 0 });
-      return { feet: { x: feet.x + r.left, y: feet.y + r.top }, squad: battle.views.u32[id] & 0xffff, team: rec.team, captain: rec.captain, unit: rec.unit, commander: rec.commander };
+      return { feet: { x: feet.x + r.left, y: feet.y + r.top }, squad: B().views.u32[id] & 0xffff, team: rec.team, captain: rec.captain, unit: rec.unit, commander: rec.commander };
     },
     /** What a press at client (x, y) would hit now. */
     hit(x: number, y: number, touch = false, seen?: Parameters<NonNullable<Input>['battle']['hits']['test']>[3]) {
       const r = view.canvas.getBoundingClientRect();
-      return input!.battle.hits.test(x - r.left, y - r.top, touch, seen);
+      return inp()!.battle.hits.test(x - r.left, y - r.top, touch, seen);
     },
     /** Synthetic pointer events: one event, a tap, a press-and-slide, a drag along client points. */
     pointer: (type: string, x: number, y: number, o: { id?: number; touch?: boolean; button?: number } = {}) => pointer(view, type, x, y, o),
@@ -315,24 +387,24 @@ export function installDev(view: View, battle: BattleView, input?: Input): void 
     },
     /** Gives an order as the input would (with its marks). */
     issue(deed: Deed, src: Source = 'typed') {
-      return battle.issue(deed, src);
+      return B().issue(deed, src);
     },
     select(id: number | null): void {
-      if (id === null) input?.battle.deselect();
-      else input?.battle.select(id);
+      if (id === null) inp()?.battle.deselect();
+      else inp()?.battle.select(id);
     },
     ui() {
-      return { ...battle.ui, mode: input?.pointer.mode, drawing: battle.clock.drawing, marks: battle.marks.stats() };
+      return { ...B().ui, mode: inp()?.pointer.mode, drawing: B().clock.drawing, marks: B().marks.stats() };
     },
     orders() {
-      return battle.orders;
+      return B().orders;
     },
     /** Runs `n` frames of `dt` at once (game frames: the sim, the input, the marks), then renders. */
     frames(n: number, dt = 1 / 60): void {
       for (let i = 0; i < n; i++) {
-        battle.frame(dt);
-        if (!battle.clock.paused) view.time += dt;
-        input?.frame(dt);
+        B().frame(dt);
+        if (!B().clock.paused) view.time += dt;
+        inp()?.frame(dt);
       }
       view.render();
     },

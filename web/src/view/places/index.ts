@@ -7,6 +7,7 @@ import type { Tier } from '../renderer';
 import type { View } from '../view';
 import { Flames, fireFlame, FLAME, Kind, Particles, roofFlames } from './fire';
 import { LIGHT, LIGHT_CAP, LIGHT_KIND, NightLights } from './night';
+import { disposeGeometries } from './build';
 import { buildPlace, buildWagons, paintOwned, poseFlag, ROOF_BURNT, SITE, THATCH, WOOD, type PlaceView } from './structures';
 import { Works } from './works';
 
@@ -229,6 +230,15 @@ export class Places {
     }
   }
 
+  /** Takes the places off the field and frees their geometries (the battle's scene ends; materials are kept). */
+  dispose(): void {
+    this.view.scene.remove(this.group);
+    disposeGeometries(this.group);
+    this.view.lightN = 0;
+    const w = window as unknown as { __v?: Record<string, unknown> };
+    if ((w.__v?.places as { of?: Places } | undefined)?.of === this) delete w.__v!.places;
+  }
+
   /** Counts for the dev hooks and the shots' checks. */
   counts(): Record<string, number> {
     this.read();
@@ -294,6 +304,7 @@ export function installPlaces(view: View, play: BattleView, memory: WebAssembly.
   const w = window as unknown as { __v?: Record<string, unknown> };
   if (import.meta.env.DEV && w.__v) {
     w.__v.places = {
+      of: places,
       counts: () => places.counts(),
       records: (which: keyof typeof BUF) => places.records(which),
       info: () => places.info,

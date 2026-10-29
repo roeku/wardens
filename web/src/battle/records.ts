@@ -53,7 +53,7 @@ export interface RecordsInput {
 function newMan(): ManRecord {
   return {
     id: 0, x: 0, y: 0, h: 0, face: 0, speed: 0, kind: 'spear', unit: 'spear', team: 0, rank: 0, commander: false,
-    captain: false, routing: false, alive: true, recruit: false, strikes: 0, hitAge: Infinity, deathAge: 0, engaged: false,
+    captain: false, faceSeed: 0, routing: false, alive: true, recruit: false, strikes: 0, hitAge: Infinity, deathAge: 0, engaged: false,
     aimX: undefined, aimY: undefined, breathAge: Infinity, backing: false,
   };
 }
@@ -70,6 +70,11 @@ export class Records {
   readonly banners: BannerRecord[] = [];
   /** Figures left out by the fog this frame (men + banners). */
   hidden = 0;
+  /**
+   * Per company: its commander's face seed (contract campaign §3 `face`), so his figure looks as on his portrait.
+   * Filled by battle/faces.ts (installFaces); empty, every commander looks by his soldier id as before.
+   */
+  faces: number[] = [];
   private readonly manPool: ManRecord[] = [];
   private readonly bannerPool: BannerRecord[] = [];
   // per squad: sums over the living men, and the commander's soldier index (−1 if none alive)
@@ -135,6 +140,7 @@ export class Records {
       r.rank = sb.rank(bits);
       r.commander = sb.commander(bits);
       r.captain = sb.captain(bits);
+      r.faceSeed = r.commander || r.captain ? (this.faces[squad] ?? 0) : 0;
       r.routing = sb.routing(bits);
       r.alive = alive;
       r.recruit = sb.recruit(bits);

@@ -92,8 +92,10 @@ impl Replay {
         Ok(b)
     }
 
-    /// The map's hash, then the state hash at every `every` ticks from 0 through `tick`, one per line.
+    /// The map's hash, then the state hash at every `every` ticks from 0 through `tick`, one per line. `every` 0
+    /// gives tick 0 and the last tick only (it used to loop for ever).
     pub fn hashes(&self, every: Tick) -> Result<String, String> {
+        let every = if every == 0 { self.tick.max(1) } else { every };
         let mut b = self.battle()?;
         let mut bots = self.bots()?;
         let mut out = format!("map {:016x}\n", b.map.hash());

@@ -7,7 +7,7 @@
 //! fighting, and everyone else attacks the nearest foe within 12. Skill 1 adds the reserve and resting; skill 2
 //! pulls wavering companies out, focuses wavering foes and keeps the captain back when hurt.
 
-use super::{Memory, Orders, Seen, companies, nearest, pick, quarry, seen};
+use super::{Memory, Orders, Seen, nearest, own, pick, quarry, seen};
 use crate::battle::{Battle, Priority, SquadState};
 use crate::contracts::{Deed, Kind, P, Team, Who};
 use crate::map::{MapKind, SiteKind};
@@ -16,7 +16,7 @@ use crate::math::atan2;
 pub(super) fn think(b: &Battle, team: Team, skill: u8, take_keep: bool, mem: &mut Memory, out: &mut Orders) {
     let g = b.tune.bots.general.clone();
     let Some(cap) = b.captain_of(team) else { return };
-    let comps = companies(b, team);
+    let comps = own(b, team, &mem.held);
     if comps.is_empty() {
         return;
     }

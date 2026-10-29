@@ -11,7 +11,7 @@
 //!    keep is threatened, or after 75 s.
 //! 7. Otherwise back to the post, or retake a lost site within 12 when no foe is within 6 of it.
 
-use super::{Memory, Orders, Seen, companies, nearest, quarry, seen};
+use super::{Memory, Orders, Seen, nearest, own, quarry, seen};
 use crate::battle::{Battle, SquadState, line_spots};
 use crate::contracts::{Deed, P, SquadId, Team, Tick, Who};
 use crate::map::SiteKind;
@@ -26,7 +26,7 @@ pub(crate) struct Sally {
 
 pub(super) fn think(b: &Battle, team: Team, mem: &mut Memory, out: &mut Orders) {
     let g = b.tune.bots.garrison.clone();
-    let comps = companies(b, team);
+    let comps = own(b, team, &mem.held);
     if mem.posts.is_empty() {
         mem.posts = comps.iter().map(|&i| (b.squads[i].id, P::new(b.squads[i].x, b.squads[i].y), b.squads[i].facing)).collect();
         mem.sally_ready = (g.sally_after_s * 30.0) as Tick;
@@ -54,7 +54,8 @@ pub(super) fn think(b: &Battle, team: Team, mem: &mut Memory, out: &mut Orders) 
         }
         return;
     }
-    let mut busy: Vec<usize> = Vec::new();
+    // Companies under the brain's intents are busy with them (06-voice.md §8).
+    let mut busy: Vec<usize> = mem.held.iter().map(|&id| id as usize).collect();
 
     // 3. Keep guard.
     let guard = comps.iter().copied().filter(|&i| !b.squads[i].spec.ranged()).min_by(|&x, &y| b.centre(x).dist(keep).total_cmp(&b.centre(y).dist(keep)).then(x.cmp(&y)));

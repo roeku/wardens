@@ -6,9 +6,14 @@
 //! Enemy: `garrison` (defending a place) and `general` at skills 0/1/2 (open field). Warband: `commander` (a
 //! sensible general that also takes the keep), `charge` (mindless: every company attacks the nearest foe) and
 //! `idle`. `raiders` hunt the ford's civilians (day 4).
+//!
+//! The broodlord's brain (06-voice.md §8) gives intents as `Source::Brain` commands for the bot's side; every bot
+//! carries them out between the brain's calls instead of its own plan for those companies (`intent`).
 
+pub mod checks;
 mod garrison;
 mod general;
+pub mod intent;
 mod raiders;
 
 use crate::battle::{Battle, Order};
@@ -120,6 +125,10 @@ pub(crate) struct Memory {
     captain_out: bool,
     /// General: foe squads as last seen, with the tick.
     known: Vec<(Tick, Seen)>,
+    /// The brain's intents (06-voice.md §8).
+    pub(crate) intents: intent::Intents,
+    /// The companies under an intent this thought: out of the bot's own plan.
+    held: Vec<SquadId>,
 }
 
 pub struct Bot {
@@ -149,23 +158,31 @@ impl Bot {
         };
         self.next = b.tick + ((period * crate::contracts::TICK_HZ as f64).round() as Tick).max(1);
         let mut out = Orders { deeds: Vec::new() };
+        // The brain's intents first: their companies are out of the bot's own plan this thought.
+        self.mem.held = self.mem.intents.absorb(b, self.team);
+        let held = self.mem.held.clone();
         match self.kind {
             BotKind::Garrison => {
                 garrison::think(b, self.team, &mut self.mem, &mut out);
-                raid_works(b, self.team, &mut out);
+                raid_works(b, self.team, &held, &mut out);
             }
             BotKind::General(k) => {
                 general::think(b, self.team, k, false, &mut self.mem, &mut out);
-                raid_works(b, self.team, &mut out);
+                raid_works(b, self.team, &held, &mut out);
             }
             BotKind::Commander => general::think(b, self.team, 1, true, &mut self.mem, &mut out),
             BotKind::Raiders => {
-                raiders::think(b, self.team, &mut out);
-                raid_works(b, self.team, &mut out);
+                raiders::think(b, self.team, &held, &mut out);
+                raid_works(b, self.team, &held, &mut out);
             }
-            BotKind::Charge => charge(b, self.team, &mut out),
+            BotKind::Charge => charge(b, self.team, &held, &mut out),
             BotKind::Idle => {}
         }
+        if !held.is_empty() || self.mem.intents.army_until.is_some() {
+            let intents = &self.mem.intents;
+            out.deeds.retain(|d| !intents.blocks(&held, d));
+        }
+        self.mem.intents.carry_out(b, self.team, self.kind, &mut out);
         out.deeds.into_iter().map(|deed| Command { tick: b.tick, team: self.team, deed, src: Source::Bot, note: None }).collect()
     }
 }
@@ -213,6 +230,15 @@ pub(crate) fn companies(b: &Battle, team: Team) -> Vec<usize> {
     (0..b.squads.len())
         .filter(|&i| b.squads[i].team == team && b.squads[i].standing() && b.squads[i].kind != Kind::Captain && b.squads[i].kind != Kind::Folk && b.squads[i].alive > 0)
         .collect()
+}
+
+/// `companies`, less those under the brain's intents (`held`): the ones the bot's own plan may order.
+pub(crate) fn own(b: &Battle, team: Team, held: &[SquadId]) -> Vec<usize> {
+    let mut out = companies(b, team);
+    if !held.is_empty() {
+        out.retain(|&i| !held.contains(&b.squads[i].id));
+    }
+    out
 }
 
 /// The seen foe nearest `from` (ties by id), optionally only within `r`, skipping routers unless nothing else.
@@ -278,10 +304,10 @@ pub(crate) fn quarry<'a>(b: &Battle, i: usize, seen: &'a [Seen], from: P) -> Opt
 /// The blight goes for places and works, not the line (08-orders.md §7 "Enemy response"): for each field work of
 /// the foe's it sees, the nearest free company (standing, not fighting, melee foot that does not breathe) is sent at
 /// it, fighting; once there its men tear it down. Given after the bot's other deeds, so it stands this thought.
-pub(crate) fn raid_works(b: &Battle, team: Team, out: &mut Orders) {
+pub(crate) fn raid_works(b: &Battle, team: Team, held: &[SquadId], out: &mut Orders) {
     let mut sent: Vec<usize> = Vec::new();
     for w in b.works.iter().filter(|w| w.team != team && !w.razed && b.sees(team, w.at)) {
-        let free = companies(b, team).into_iter().filter(|&i| {
+        let free = own(b, team, held).into_iter().filter(|&i| {
             let s = &b.squads[i];
             !sent.contains(&i) && s.state != crate::battle::SquadState::Fighting && !s.spec.ranged() && s.spec.breath == 0.0 && s.kind != Kind::Horse
         });
@@ -304,7 +330,7 @@ pub(crate) fn raid_works(b: &Battle, team: Team, out: &mut Orders) {
 
 /// `charge`: every company attacks the nearest foe it sees, or marches on the enemy's deploy point fighting; the
 /// captain rides with them once a foe is seen (an army attack puts him on his ride).
-fn charge(b: &Battle, team: Team, out: &mut Orders) {
+fn charge(b: &Battle, team: Team, held: &[SquadId], out: &mut Orders) {
     let foes = seen(b, team);
     let goal = b.map.deploy[1 - (team as usize & 1)];
     if let Some(c) = b.captain_of(team)
@@ -313,7 +339,7 @@ fn charge(b: &Battle, team: Team, out: &mut Orders) {
     {
         out.push_always(Deed::Attack { who: Who::Army, target: f.id, via: Vec::new() });
     }
-    for i in companies(b, team) {
+    for i in own(b, team, held) {
         let id = b.squads[i].id;
         let who = Who::Squad { id };
         // Its standing priority (nearest unless told otherwise, 08-orders.md §5).

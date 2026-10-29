@@ -54,14 +54,15 @@ impl Battle {
     }
 
     /// Each company as hit-testing and the marks need it, as JSON: `[{id, team, kind, unit, name, radius, ranged,
-    /// captain}]` (its kind, unit and body radius do not change in a battle).
+    /// captain, face}]` (its kind, unit and body radius do not change in a battle); `face` is the commander's look
+    /// from the campaign, 0 to derive it from the id.
     pub fn squads_json(&self) -> String {
         let b = &self.inner;
         let out: Vec<Value> = b
             .squads
             .iter()
             .map(|s| {
-                json!({ "id": s.id, "team": s.team, "kind": format!("{:?}", s.kind).to_lowercase(), "unit": s.unit.name(), "name": s.name, "radius": s.spec.radius, "ranged": s.spec.ranged(), "captain": s.kind == Kind::Captain })
+                json!({ "id": s.id, "team": s.team, "kind": format!("{:?}", s.kind).to_lowercase(), "unit": s.unit.name(), "name": s.name, "radius": s.spec.radius, "ranged": s.spec.ranged(), "captain": s.kind == Kind::Captain, "face": s.face })
             })
             .collect();
         Value::Array(out).to_string()

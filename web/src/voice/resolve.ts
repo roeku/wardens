@@ -88,8 +88,16 @@ export interface Resolution {
 }
 
 type Frame = ReturnType<typeof frame>;
+/** How a side's words are resolved. */
+export interface ResolveOpts {
+  /** False: never an order to the army (the broodlord's companies are ordered each by name, 06-voice.md §8). */
+  army?: boolean;
+}
+
 interface Ctx {
   f: Field;
+  /** Orders may go to the army as a whole. */
+  army: boolean;
   fr: Frame;
   tags: ReturnType<typeof lineTags>;
   /** Companies named earlier in the same words, for OTHERS. */
@@ -136,11 +144,11 @@ const round2 = (p: P): P => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y
 /** A point kept half a tile inside the map, when the field gives the map's size (the live game does). */
 const inMap = (p: P, f: Field): P =>
   f.size ? { x: Math.min(Math.max(p.x, 0.5), f.size.w - 0.5), y: Math.min(Math.max(p.y, 0.5), f.size.h - 0.5) } : p;
-const foeSquad = (e: FieldFoe) => Number(e.id.replace(/\D/g, ''));
+const foeSquad = (e: FieldFoe) => e.squad ?? Number(e.id.replace(/\D/g, ''));
 const lc = (s: string) => s.toLowerCase().replace(/_/g, ' ');
 
-export function resolve(reply: Reply, f: Field): Resolution {
-  const ctx: Ctx = { f, fr: frame(f), tags: lineTags(f), named: new Set(), groups: [...(f.groups ?? [])] };
+export function resolve(reply: Reply, f: Field, opts: ResolveOpts = {}): Resolution {
+  const ctx: Ctx = { f, army: opts.army ?? true, fr: frame(f), tags: lineTags(f), named: new Set(), groups: [...(f.groups ?? [])] };
   const orders: Resolved[] = [];
   const refused: Refused[] = [];
   for (const raw of reply.orders) {
@@ -220,14 +228,18 @@ function nearSpot(spot: string, ctx: Ctx, self?: FieldCompany): FieldCompany[] {
 /** ARMY, OTHERS, kinds, names, groups, places in the line, states and nearness into companies. */
 function expandWho(who: string[], ctx: Ctx): { army: boolean; list: FieldCompany[] } {
   const { f } = ctx;
-  if (!who.length || who.includes('ARMY')) return { army: true, list: f.ours.filter(canObey) };
+  if (!who.length || who.includes('ARMY')) {
+    const all = f.ours.filter(canObey);
+    if (!ctx.army && !all.length) refuse('no company can take orders');
+    return { army: ctx.army, list: all };
+  }
   const out = new Map<string, FieldCompany>();
   for (const s of who) select(s, ctx).forEach((c) => out.set(c.name, c));
   const all = [...out.values()];
   const list = all.filter(canObey);
   if (!list.length) refuse(`${all.map((c) => c.name).join(', ')} cannot take orders (${all[0].state})`);
   // Naming every company is an order to the army (DECISIONS.md D-07).
-  return { army: list.length === f.ours.length && list.length > 1, list };
+  return { army: ctx.army && list.length === f.ours.length && list.length > 1, list };
 }
 
 // ---------------------------------------------------------------------------------------------

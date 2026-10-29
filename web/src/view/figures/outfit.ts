@@ -1,9 +1,10 @@
 import { UNIT_ORDER, type Kind, type Team, type Unit } from '../../contracts';
 import { BLIGHTMAN, BROOD_BODY, DRAKE_SCALE, TROLL_BODY } from './blight-parts';
 import { hash32 } from './hash';
+import { brute, person } from './person';
 import {
-  ARCHER_SLEEVE, BLIGHT, CAPTAIN_HELM, CAPTAIN_PLUME, CHARGER, COATS, GOLD, HAIR, HERALDRY, HIDES, HOSE, MAIL, SKIN, SMOCKS,
-  STEEL, TEAM, TROLL,
+  ARCHER_SLEEVE, BLIGHT, BONE, CAPTAIN_HELM, CAPTAIN_PLUME, CHARGER, COATS, FLAME, GOLD, HAIR, HERALDRY, HIDES, HOSE, MAIL, MANE,
+  SKIN, SMOCKS, STEEL, TEAM, TROLL,
 } from './palette';
 
 // docs/spec/02-look.md §5 "Kinds", "Rank marks" and "Peoples": what a man wears, from his kind, team, rank and id.
@@ -82,6 +83,18 @@ export interface Look {
   maul: boolean;
   /** A blight-man wears a hide over his hump. */
   mantle: boolean;
+  /** No hair on the head (a commander's person, person.ts). */
+  bald: boolean;
+  /** The broodlord's horns (0 the great pair, 1 ram's curls, 2 upswept) and their length, its mane and its eyes' ember. */
+  horns: number;
+  hornLen: number;
+  mane: number;
+  eyes: number;
+  /** The broodlord's mane (0 none, 1 a short crest, 2 long) and muzzle (0 bull, 1 boar, 2 ape), person.ts `brute`. */
+  maneShape: number;
+  muzzle: number;
+  /** The broodlord's horn colour (BONE: the fixed bone parts). */
+  hornColour: number;
 }
 
 const pick = <T>(list: readonly T[], id: number, salt: number) => list[hash32(id, salt, 0x5eed) % list.length];
@@ -95,6 +108,12 @@ export interface Who {
   commander: boolean;
   captain: boolean;
   recruit: boolean;
+  /**
+   * A commander's face seed (contract campaign §3 `face`): his skin, hair and beard (a broodlord's flesh, horns, mane
+   * and eyes) come from it instead of the soldier id, so he looks the same in every battle and on his portrait.
+   * 0 or absent: by the id, as for every other man.
+   */
+  faceSeed?: number;
 }
 
 /** A folk figure's variant, from the id alone: 1 in 4 a child, about half women. */
@@ -135,8 +154,24 @@ export function outfit(w: Who): Look {
     arms: 'club',
     maul: false,
     mantle: false,
+    bald: false,
+    horns: 0,
+    hornLen: 1,
+    mane: MANE,
+    eyes: FLAME[1],
+    maneShape: 2,
+    muzzle: 0,
+    hornColour: BONE,
   };
   if (look.form !== 'man') return blight(look, w);
+  // a commander with a face is his own person (person.ts); everyone else's looks follow the soldier id
+  if (w.faceSeed) {
+    const p = person(w.faceSeed);
+    look.skin = p.skin;
+    look.hair = p.hair;
+    look.beard = p.beard;
+    look.bald = p.bald;
+  }
   const kind = w.captain ? 'captain' : w.kind;
   switch (kind) {
     case 'spear':
@@ -230,10 +265,23 @@ function blight(look: Look, w: Who): Look {
       look.flesh = w.commander ? BLIGHT[1] : BLIGHT[2];
       look.scale = DRAKE_SCALE * lead;
       break;
-    case 'broodlord':
+    case 'broodlord': {
       look.flesh = BLIGHT[2];
       look.scale = BROOD_BODY.scale;
+      // a broodlord with a face (a named foe of the campaign) is its own beast (person.ts `brute`)
+      if (w.faceSeed) {
+        const b = brute(w.faceSeed);
+        look.flesh = b.flesh;
+        look.horns = b.horns;
+        look.hornLen = b.hornLen;
+        look.mane = b.mane;
+        look.eyes = b.eyes;
+        look.maneShape = b.maneShape;
+        look.muzzle = b.muzzle;
+        look.hornColour = b.hornColour;
+      }
       break;
+    }
     default:
       break;
   }

@@ -42,7 +42,7 @@ const WOOD: &[&str] = &[
 
 /// Words a feature may never be called: the order language's verbs, selectors, kinds, foes, works and the words the
 /// voice's fast path listens for (web/src/voice/{orders,field}.ts).
-const NEVER: &[&str] = &[
+pub const NEVER: &[&str] = &[
     "ADVANCE", "ALL", "ARCHER", "ARCHERS", "ARMY", "ATTACK", "BACK", "BARRICADE", "BLIGHT", "BLIGHTMEN", "BOW", "BOWS",
     "BRIDGE", "BROODLORD", "BUILD", "CAPTAIN", "CAVALRY", "CENTRE", "CHARGE", "COLUMN", "COMMIT", "COVER", "DRAKE",
     "DRAKES", "FACE", "FIRE", "FREE", "FRESH", "FRONT", "GO", "GUARD", "HALT", "HERE", "HOLD", "HORSE", "LEFT", "LEVY",
@@ -229,7 +229,7 @@ pub fn onset(word: &str) -> String {
 
 /// Too close to a company's name to tell apart by ear: the same word, one edit away, or the same leading sound
 /// and consonants ("BORS" and "BARS").
-fn alike(a: &str, b: &str) -> bool {
+pub fn alike(a: &str, b: &str) -> bool {
     let consonants = |s: &str| -> String { s.chars().filter(|c| !"AEIOUYHW".contains(*c)).collect() };
     a == b || levenshtein(a, b) <= 1 || (onset(a) == onset(b) && consonants(a) == consonants(b))
 }

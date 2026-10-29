@@ -3,7 +3,7 @@ import { tatterStage, type BannerLook, type Sigil } from './atlas';
 import { hash32 } from './hash';
 import { frame, ident, m4, mul, point, rotX, rotY, rotZ, scale, translate, type M4 } from './mat';
 import type { Form } from './outfit';
-import { BLIGHT, EMBER, FLAME } from './palette';
+import { BLIGHT, BONE, EMBER, FLAME } from './palette';
 import { BANNER, type PartId } from './parts';
 import { AT, emit, FIG, fitCloth, HIT_FLASH, registerRig, smooth, thrust, TOPPLE, WALK_MIN, type FigState, type RigCtx } from './rig';
 import { snapFigure, type Snapped } from './snap';
@@ -30,6 +30,8 @@ const STRIDE_DRAKE = 3.4;
 const TROLL_IMPACT = 0.5;
 /** A corpse's cracks and eyes: the ember gone out, the blight's darkest step. */
 const COLD = BLIGHT[0];
+/** Where the broodlord's horns grow from on its skull (head frame): a longer pair is scaled about it. */
+const HORN_ROOT = [-0.015, 0.075] as const;
 const BROOD_IMPACT = 0.35;
 /** A blight-man's chop (seconds): the men's sword blow, a little slower and wilder. */
 const CHOP_T = 0.35;
@@ -310,19 +312,36 @@ function poseBrute(c: RigCtx, st: FigState, rec: ManRecord, R: BruteRig): void {
   rotZ(TOR, -tilt);
   emit(c, R.torso, ROOT, TOR, L.flesh, flash, tpu);
   if (L.mantle) emit(c, 'bmMantle', ROOT, TOR, L.hide, flash, tpu);
-  if (R.mane) emit(c, R.mane, ROOT, TOR, null, flash, tpu);
+  // the mane is dyed (MANE unless a broodlord's face gives another, person.ts `brute`)
+  if (R.mane && L.maneShape > 0) emit(c, L.maneShape === 1 ? 'blCrest' : R.mane, ROOT, TOR, L.mane, flash, tpu);
   // the ember goes out of the dead
   const ember = alive ? EMBER : COLD;
   if (R.crack) emit(c, R.crack, ROOT, TOR, ember, flash, tpu);
-  if (R.heart) emit(c, R.heart, ROOT, TOR, !alive ? COLD : striking ? FLAME[2] : FLAME[1], flash, tpu);
+  // the heart burns in the eyes' glow: the ember (hotter while it strikes), or a broodlord's green or pale
+  if (R.heart) emit(c, R.heart, ROOT, TOR, !alive ? COLD : L.eyes !== FLAME[1] ? L.eyes : striking ? FLAME[2] : FLAME[1], flash, tpu);
   ident(HEAD).set(TOR);
   translate(HEAD, B.neck[0], B.neck[1], 0);
   // the head looks ahead again (and up at whom it strikes); dead, it sags
   rotZ(HEAD, B.headLift + lean * 0.7 + (engaged ? 0.08 : 0));
   if (!alive) rotZ(HEAD, -0.35);
-  emit(c, R.head, ROOT, HEAD, L.flesh, flash, tpu);
-  emit(c, R.eyes, ROOT, HEAD, alive ? FLAME[1] : COLD, flash, tpu);
-  if (R.horns) emit(c, R.horns, ROOT, HEAD, null, flash, tpu);
+  // a broodlord's face picks its muzzle: the bull's, a boar's snout, an ape's jaw (person.ts `brute`)
+  emit(c, R.blow === 'swipe' && L.muzzle === 1 ? 'blHead1' : R.blow === 'swipe' && L.muzzle === 2 ? 'blHead2' : R.head, ROOT, HEAD, L.flesh, flash, tpu);
+  emit(c, R.eyes, ROOT, HEAD, alive ? L.eyes : COLD, flash, tpu);
+  if (R.horns) {
+    // a broodlord's face picks its horns and their length, grown about their roots on the skull (person.ts `brute`)
+    // bone horns are the fixed-colour parts; black or ash ones the dyed copies
+    const bone = L.hornColour === BONE;
+    const horns: PartId = bone ? (L.horns === 1 ? 'blHorns1' : L.horns === 2 ? 'blHorns2' : R.horns) : L.horns === 1 ? 'blHornsD1' : L.horns === 2 ? 'blHornsD2' : 'blHornsD0';
+    const dye = bone ? null : L.hornColour;
+    if (L.hornLen === 1) emit(c, horns, ROOT, HEAD, dye, flash, tpu);
+    else {
+      TMP.set(HEAD);
+      translate(TMP, HORN_ROOT[0], HORN_ROOT[1], 0);
+      scale(TMP, L.hornLen, L.hornLen, L.hornLen);
+      translate(TMP, -HORN_ROOT[0], -HORN_ROOT[1], 0);
+      emit(c, horns, ROOT, TMP, dye, flash, tpu * L.hornLen);
+    }
+  }
   if (rec.commander && R.blow === 'chop') emit(c, 'bmCrown', ROOT, HEAD, null, flash, tpu);
 
   // ---------------------------------------------------------------- arms

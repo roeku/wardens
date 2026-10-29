@@ -26,6 +26,9 @@ export interface Pressed {
   handle: boolean;
   /** The captain: holding him still starts voice. */
   captain: boolean;
+  /** What the press becomes past slop: a stroke (in battle, the default), a drag (carrying a commander at the
+   * muster), or a pan (the road, the title: the ground follows the finger and nothing is ordered). */
+  becomes?: 'stroke' | 'drag' | 'pan';
 }
 
 export interface Gestures {
@@ -75,6 +78,8 @@ export class PointerInput {
   private readonly tracks = new Map<number, Track>();
   private press: PressState | null = null;
   private panId = -1;
+  /** The pan was begun by a touch press (a second finger then pinches). */
+  private panTouch = false;
   private pinch: { a: number; b: number; d0: number; mx: number; my: number } | null = null;
   private twoTap: { t0: number; travel: number } | null = null;
   private wheel = 0;
@@ -87,15 +92,32 @@ export class PointerInput {
     el.style.touchAction = 'none';
     el.style.userSelect = 'none';
     (el.style as CSSStyleDeclaration & { webkitUserSelect: string }).webkitUserSelect = 'none';
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
-    el.addEventListener('pointerdown', (e) => this.down(e));
-    el.addEventListener('pointermove', (e) => this.move(e));
-    el.addEventListener('pointerup', (e) => this.up(e, false));
-    el.addEventListener('pointercancel', (e) => this.up(e, true));
-    el.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
-    el.addEventListener('pointerleave', (e) => {
-      if (e.pointerType === 'mouse') this.g.leave();
+    this.on('contextmenu', (e) => e.preventDefault());
+    this.on('pointerdown', (e) => this.down(e as PointerEvent));
+    this.on('pointermove', (e) => this.move(e as PointerEvent));
+    this.on('pointerup', (e) => this.up(e as PointerEvent, false));
+    this.on('pointercancel', (e) => this.up(e as PointerEvent, true));
+    this.on('wheel', (e) => this.onWheel(e as WheelEvent), { passive: false });
+    this.on('pointerleave', (e) => {
+      if ((e as PointerEvent).pointerType === 'mouse') this.g.leave();
     });
+  }
+
+  private readonly bound: [string, (e: Event) => void, AddEventListenerOptions | undefined][] = [];
+
+  private on(type: string, fn: (e: Event) => void, opts?: AddEventListenerOptions): void {
+    this.el.addEventListener(type, fn, opts);
+    this.bound.push([type, fn, opts]);
+  }
+
+  /** Unhooks every listener (a scene ends); a press in progress is dropped without an order. */
+  dispose(): void {
+    for (const [type, fn, opts] of this.bound) this.el.removeEventListener(type, fn, opts);
+    this.bound.length = 0;
+    if (this.press) window.clearTimeout(this.press.timer);
+    this.press = null;
+    this.mode = 'none';
+    this.tracks.clear();
   }
 
   private down(e: PointerEvent): void {
@@ -130,7 +152,15 @@ export class PointerInput {
       }
       return;
     }
-    if ((this.mode === 'press' || this.mode === 'stroke') && touchish && this.press) {
+    if (this.mode === 'pan' && touchish && this.panTouch && this.tracks.has(this.panId)) {
+      // a second finger on a pan begun by a press: pinch
+      const first = this.panId;
+      this.panId = -1;
+      this.panTouch = false;
+      this.startPinch(first, e.pointerId, performance.now() - TWO_TAP_MS, TWO_TAP_PX);
+      return;
+    }
+    if ((this.mode === 'press' || this.mode === 'stroke' || this.mode === 'drag') && touchish && this.press) {
       // a second finger: cancel the stroke, give back the press's selection, pinch
       const st = this.press;
       window.clearTimeout(st.timer);
@@ -163,7 +193,8 @@ export class PointerInput {
     tr.y = p.y;
     switch (this.mode) {
       case 'press':
-      case 'stroke': {
+      case 'stroke':
+      case 'drag': {
         const st = this.press;
         if (!st || st.id !== e.pointerId) return;
         const d = Math.hypot(p.x - st.x0, p.y - st.y0);
@@ -171,7 +202,17 @@ export class PointerInput {
         if (this.mode === 'press') {
           if (st.holding || d <= thresholds(st.touchish).slop) return;
           window.clearTimeout(st.timer);
-          this.mode = 'stroke';
+          const becomes = st.pressed.becomes ?? 'stroke';
+          if (becomes === 'pan') {
+            // the press becomes a pan: the ground follows the finger from where it went down
+            this.press = null;
+            this.mode = 'pan';
+            this.panId = st.id;
+            this.panTouch = st.touchish;
+            this.g.pan(p.x - st.x0, p.y - st.y0);
+            return;
+          }
+          this.mode = becomes;
           this.g.strokeStart(st.x0, st.y0);
         }
         this.g.strokeMove(p.x, p.y);
@@ -211,11 +252,12 @@ export class PointerInput {
     const p = tr ? { x: tr.x, y: tr.y } : this.local(e.clientX, e.clientY);
     switch (this.mode) {
       case 'press':
-      case 'stroke': {
+      case 'stroke':
+      case 'drag': {
         const st = this.press;
         if (!st || st.id !== e.pointerId) return;
         window.clearTimeout(st.timer);
-        const stroke = this.mode === 'stroke';
+        const stroke = this.mode !== 'press';
         this.press = null;
         this.mode = 'none';
         if (st.holding) this.g.hold('end');
@@ -228,6 +270,7 @@ export class PointerInput {
         if (e.pointerId === this.panId) {
           this.mode = 'none';
           this.panId = -1;
+          this.panTouch = false;
         }
         return;
       case 'pinch':

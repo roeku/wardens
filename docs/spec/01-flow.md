@@ -189,7 +189,7 @@ If a company is selected, the order goes to it alone and deselects it. Otherwise
 - **Garrison size.**
   - The share is `(0.80 + 0.075·step + 0.15·danger)`.
   - Kinds: shield, spear, archer to start; +spear from step 2; +archer if dangerous; +horse from step 4; +shield at the keep.
-  - Size is scaled by the warband's size, with factor 0.6.
+  - Size is scaled by the warband's size, with factor 0.9. (The original used 0.6 against human garrisons; against the blight's units 0.6 let a sensible bot win 74.5% of campaigns and doing nothing 2%. See DECISIONS.md D-21.)
   - Rank `floor(step/3)`.
 - **Battle time:** 300 s × width/48. When the day runs out, night follows (see the battle spec).
 - **Village under the torch.**
