@@ -16,6 +16,7 @@ mod morale;
 mod order;
 mod orders;
 mod outcome;
+mod places;
 mod replay;
 mod ride;
 mod setup;
@@ -25,11 +26,13 @@ mod tests;
 mod works;
 
 pub mod checks;
+pub mod place_checks;
 
 pub use crate::contracts::Work as WorkKind;
 pub use front::line_spots;
 pub use order::{How, Order, Pace, Pending, Priority, Rules, Shape, Stance, When};
 pub use outcome::OutcomeReason;
+pub use places::{Ford, Group, House, HouseState, Light, LightKind, Places, Wave};
 pub use replay::{BotSlot, Replay};
 pub use setup::{Company, Setup};
 pub use works::Work;
@@ -367,6 +370,8 @@ pub struct Battle {
     pub works: Vec<Work>,
     /// Deeds for each army waiting for their trigger (08-orders.md §6).
     pub waiting: [Vec<Pending>; 2],
+    /// Day 4's places: the town's houses, the ford, the night's torches and relief, the freed.
+    pub places: Places,
     decided: Option<(Team, OutcomeReason)>,
     fog: [Vec<u8>; 2],
     /// A waiting deed is being carried out: its orders keep the queues they land in.
@@ -410,6 +415,7 @@ impl Battle {
             held: [setup.held; 2],
             works: Vec::new(),
             waiting: [Vec::new(), Vec::new()],
+            places: Places::default(),
             decided: None,
             fog: [vec![0; tiles], vec![0; tiles]],
             releasing: false,
@@ -426,6 +432,7 @@ impl Battle {
         for team in 0..2 {
             b.had_captain[team] = b.captain_of(team as Team).is_some();
         }
+        b.init_places();
         // Blows aren't synchronised: each man's first cooldown is a random fraction of his interval (§5).
         for k in 0..b.soldiers.len() {
             let s = &b.squads[b.soldiers[k].squad as usize];
@@ -481,6 +488,8 @@ impl Battle {
 
     fn tick_once(&mut self) {
         self.apply_due();
+        // Companies joining the battle now (the ford's civilians and raiders, the night's relief, the freed).
+        self.spawn_places();
         // 1. rebucket: the neighbour grid by counting sort, and what each squad measures once.
         self.rebucket();
         self.measure();
@@ -497,15 +506,17 @@ impl Battle {
         // 4. resolve: every blow lands together, after all movement; then foes tear at the field works.
         self.resolve();
         self.raze_works();
-        // 5. burn: the village under the torch comes on day 4.
+        // 5. burn: the village under the torch burns in step 9, with the town.
         // 6. arrows.
         self.update_arrows();
         // 7. hooks: beasts trampling when they flee.
         self.trample();
         // 8. cull: the dead leave the ranks, which close up.
         self.cull();
-        // 9. sites and the night (the town's fires, the ford and the night's relief come on day 4).
+        // 9. sites, the town's fires, the ford and the night.
         self.update_sites();
+        self.update_town();
+        self.update_ford();
         self.update_night();
         // 10. morale.
         self.update_morale();
@@ -725,6 +736,7 @@ impl Battle {
                 f.f64(v);
             }
         }
+        self.hash_places(&mut f);
         f.u32(self.decided.map_or(0, |(t, r)| 1 + t as u32 * 16 + r as u32));
         f.finish()
     }
@@ -830,7 +842,7 @@ impl Battle {
     /// The nearest open tile centre to `p` within the front's snap radius, or `p` if it is open. A point off the
     /// map is first brought inside it (by the men's edge margin): a front's end or a station can fall outside, and
     /// an anchor sent there walks off the map, where its men cannot follow and the cohesion gate holds it for good.
-    pub(crate) fn open_near(&self, p: P) -> P {
+    pub fn open_near(&self, p: P) -> P {
         let m = self.tune.movement.edge_margin;
         let p = P::new(p.x.clamp(m, self.map.wf() - m), p.y.clamp(m, self.map.hf() - m));
         if self.walkable(p) {

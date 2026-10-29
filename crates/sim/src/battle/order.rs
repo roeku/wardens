@@ -329,6 +329,12 @@ impl Battle {
         if s.reserve.is_some() && !s.spec.ranged() {
             r.engage = r.engage.min(c.reach + c.walk_line_beyond);
         }
+        // A company that deals no harm (the ford's civilians) never fights: it walks on or runs (places.rs).
+        if s.spec.damage <= 0.0 {
+            r.engage = 0.0;
+            r.fire = false;
+            r.strike = false;
+        }
         // At work on a field work it cannot fight (08-orders.md §7).
         if s.working {
             r.engage = 0.0;

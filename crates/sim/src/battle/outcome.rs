@@ -21,6 +21,10 @@ pub enum OutcomeReason {
     TimeOut = 6,
     /// The attacker's captain lived until dawn.
     Dawn = 7,
+    /// The ford: every group has come and gone, and some were saved.
+    Saved = 8,
+    /// The ford: every group has come and gone, and nobody was saved.
+    NoneSaved = 9,
 }
 
 impl OutcomeReason {
@@ -37,6 +41,8 @@ impl OutcomeReason {
             OutcomeReason::Routed => "routed",
             OutcomeReason::TimeOut => "time out",
             OutcomeReason::Dawn => "dawn",
+            OutcomeReason::Saved => "saved",
+            OutcomeReason::NoneSaved => "none saved",
         }
     }
 }
@@ -97,8 +103,8 @@ impl Battle {
     }
 
     /// The day's end in a campaign battle (04-battle.md §8 "Night"): the dusk bell when 80% of the day is gone,
-    /// then night falls (sight ×0.6; the garrison attacks). Dawn comes 70 s later. The relief from the east and the
-    /// torches come with day 4.
+    /// then night falls (sight ×0.6; the garrison attacks; torches are lit, places.rs). Dawn comes 70 s later. The
+    /// relief from the east comes 6 s after nightfall (`spawn_places`).
     pub(super) fn update_night(&mut self) {
         if self.map.kind == MapKind::Field || self.decided.is_some() {
             return;
@@ -113,11 +119,13 @@ impl Battle {
         if !self.night && !self.dawn && self.tick >= tick(day) {
             self.night = true;
             self.event(EventCode::Nightfall, self.map.deploy[0], 0, 0);
+            self.light_torches();
         }
         // Dawn ends the night (the battle's own outcome is reckoned in step 12); `When::Dawn` reads it.
         if self.night && self.tick >= tick(day + night_s) {
             self.night = false;
             self.dawn = true;
+            self.places.dawn_at = Some(self.tick);
         }
     }
 
@@ -178,13 +186,23 @@ impl Battle {
                         _ => {}
                     }
                 }
-                MapKind::Ford => {}
+                MapKind::Ford => {
+                    if let Some(d) = self.ford_outcome() {
+                        break 'd Some(d);
+                    }
+                }
             }
             if self.time() >= self.time_limit() {
                 if self.map.kind == MapKind::Field {
                     break 'd Some((by_worth(self), OutcomeReason::TimeOut));
                 }
                 self.event(EventCode::Dawn, self.map.deploy[0], 0, 0);
+                // The night ends with the battle (step 9 may not have seen this tick yet).
+                if self.night {
+                    self.night = false;
+                    self.dawn = true;
+                    self.places.dawn_at = Some(self.tick);
+                }
                 break 'd Some((0, OutcomeReason::Dawn));
             }
             None

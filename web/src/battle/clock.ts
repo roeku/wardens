@@ -2,7 +2,8 @@ import { TICK_HZ } from '../contracts';
 
 // docs/spec/04-battle.md §1 "Fixed tick": the browser owns the accumulator, `acc += dt·rate`, stepping while
 // acc ≥ 1/30, with rate = slow·(fast ? 2 : 1) and `slow` easing toward its target at dt·12. The target is 0.3 while
-// the player draws a line (day 4), and 0.35 for 0.9 s after one of our commanders falls or 0.7 s after an enemy's.
+// the player draws a line or speaks (day 4; 06-voice.md §3), and 0.35 for 0.9 s after one of our commanders falls or
+// 0.7 s after an enemy's.
 
 const TICK = 1 / TICK_HZ;
 const SLOW_EASE = 12;
@@ -21,6 +22,8 @@ export class Clock {
   paused = false;
   /** Set by the input layer while the player draws a line (day 4). */
   drawing = false;
+  /** Set by voice while the captain speaks, and after release until the orders land (06-voice.md §3). */
+  listening = false;
   /** Real seconds left of the slow time after a commander's fall. */
   private fallLeft = 0;
 
@@ -31,7 +34,7 @@ export class Clock {
   /** The target `slow` eases toward. */
   get target(): number {
     let t = 1;
-    if (this.drawing) t = Math.min(t, SLOW_DRAWING);
+    if (this.drawing || this.listening) t = Math.min(t, SLOW_DRAWING);
     if (this.fallLeft > 0) t = Math.min(t, SLOW_FALL);
     return t;
   }

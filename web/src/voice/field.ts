@@ -46,6 +46,9 @@ export interface FieldPlace {
   y: number;
   holder: 'ours' | 'foe' | 'none';
   burning?: string;
+  /** The sim's site id (the live game gives it; null for a place that is not a site, such as a ford). Absent: the
+   * place's index in `places` (the eval fixtures). */
+  site?: number | null;
 }
 
 export type FieldGround =
@@ -92,6 +95,8 @@ export interface Field {
   waiting?: FieldWaiting[];
   /** Deployment before contact: "advance" ends it (08-orders §8). */
   held?: boolean;
+  /** The map's size in tiles: routes and points the words make are kept inside it (the live game gives it). */
+  size?: { w: number; h: number };
 }
 
 /** Kind words the model may use in `who`, and the company kinds they name. */
@@ -228,7 +233,7 @@ export function stateText(f: Field): string {
   const out = [`FACING ${f.facing}. Army left = ${f.armyLeft}.${f.held ? ' Deployment held.' : ''}`, `OURS: ${lines.join(' |\n      ')}`];
   if (f.groups?.length) out.push(`GROUPS: ${f.groups.map((g) => `${g.name} = ${g.members.join(' ')}`).join(' | ')}`);
   if (f.waiting?.length) out.push(`WAITING: ${f.waiting.map((w) => `${w.who.join(' ')} ${w.what}`).join(' | ')}`);
-  out.push(`FOES SEEN: ${foes.join(' | ')}`, `PLACES: ${places.join(' | ')}`, `GROUND: ${ground.join(' | ')}`);
+  out.push(`FOES SEEN: ${foes.length ? foes.join(' | ') : 'none'}`, `PLACES: ${places.join(' | ')}`, `GROUND: ${ground.join(' | ')}`);
   if (f.works?.length) out.push(`WORKS: ${f.works.map((w) => `${w.name} ${w.work} (${w.x},${w.y}) ${w.holder}`).join(' | ')}`);
   return out.join('\n');
 }

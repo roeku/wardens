@@ -1,7 +1,8 @@
 //! Step 11, sight (03-land.md §8): one byte per tile per team, 0 never seen, 1 seen before, 2 in sight. Every 8
 //! ticks every 2 is demoted to 1, then circles of sight are stamped: each squad
 //! `(6.5 + hillSight)·(0.6 at night) + min(spread, 3)`, owned towers 9 and other sites 4, plus hillSight, with
-//! `hillSight = min(3, height·1.5)`. Burning houses (radius 4) and torches at night come with day 4.
+//! `hillSight = min(3, height·1.5)`; burning houses light radius 4, and at night each side's torches give its companies
+//! away within their spread + 0.8 (places.rs).
 
 use super::Battle;
 use crate::contracts::P;
@@ -28,6 +29,8 @@ impl Battle {
                     circles.push((site.at, r + hill));
                 }
             }
+            // Burning houses, and the other side's torches at night (places.rs).
+            self.place_sight(team, &mut circles);
             let (w, h) = (self.map.w as i32, self.map.h as i32);
             let fog = &mut self.fog[team as usize];
             for v in fog.iter_mut() {

@@ -5,10 +5,11 @@
 //!
 //! Enemy: `garrison` (defending a place) and `general` at skills 0/1/2 (open field). Warband: `commander` (a
 //! sensible general that also takes the keep), `charge` (mindless: every company attacks the nearest foe) and
-//! `idle`. `raiders` comes with the ford on day 4.
+//! `idle`. `raiders` hunt the ford's civilians (day 4).
 
 mod garrison;
 mod general;
+mod raiders;
 
 use crate::battle::{Battle, Order};
 use crate::contracts::{Command, Deed, Kind, P, Source, SquadId, Team, Tick, Who};
@@ -21,10 +22,12 @@ pub enum BotKind {
     Commander,
     Charge,
     Idle,
+    /// The ford's raiders (04-battle.md §7).
+    Raiders,
 }
 
 impl BotKind {
-    /// `garrison`, `general0`..`general2` (`general` is skill 1), `commander`, `charge`, `idle`.
+    /// `garrison`, `general0`..`general2` (`general` is skill 1), `commander`, `charge`, `idle`, `raiders`.
     pub fn parse(s: &str) -> Result<BotKind, String> {
         Ok(match s {
             "garrison" => BotKind::Garrison,
@@ -34,7 +37,8 @@ impl BotKind {
             "commander" => BotKind::Commander,
             "charge" => BotKind::Charge,
             "idle" => BotKind::Idle,
-            _ => return Err(format!("no bot {s} (garrison, general0..2, commander, charge, idle)")),
+            "raiders" => BotKind::Raiders,
+            _ => return Err(format!("no bot {s} (garrison, general0..2, commander, charge, idle, raiders)")),
         })
     }
 
@@ -45,6 +49,7 @@ impl BotKind {
             BotKind::Commander => "commander".into(),
             BotKind::Charge => "charge".into(),
             BotKind::Idle => "idle".into(),
+            BotKind::Raiders => "raiders".into(),
         }
     }
 }
@@ -137,6 +142,7 @@ impl Bot {
         let t = &b.tune.bots;
         let period = match self.kind {
             BotKind::Garrison => t.garrison.think_s,
+            BotKind::Raiders => t.raiders.think_s,
             BotKind::General(k) => t.general.think_s[(k as usize).min(2)],
             BotKind::Commander => t.general.think_s[1],
             BotKind::Charge | BotKind::Idle => t.charge_think_s,
@@ -153,6 +159,10 @@ impl Bot {
                 raid_works(b, self.team, &mut out);
             }
             BotKind::Commander => general::think(b, self.team, 1, true, &mut self.mem, &mut out),
+            BotKind::Raiders => {
+                raiders::think(b, self.team, &mut out);
+                raid_works(b, self.team, &mut out);
+            }
             BotKind::Charge => charge(b, self.team, &mut out),
             BotKind::Idle => {}
         }
@@ -198,9 +208,11 @@ fn same(b: &Battle, deed: &Deed) -> bool {
     }
 }
 
-/// The side's companies that can take orders (standing, not the captain), in id order.
+/// The side's companies that can take orders (standing, not the captain, not civilians), in id order.
 pub(crate) fn companies(b: &Battle, team: Team) -> Vec<usize> {
-    (0..b.squads.len()).filter(|&i| b.squads[i].team == team && b.squads[i].standing() && b.squads[i].kind != Kind::Captain && b.squads[i].alive > 0).collect()
+    (0..b.squads.len())
+        .filter(|&i| b.squads[i].team == team && b.squads[i].standing() && b.squads[i].kind != Kind::Captain && b.squads[i].kind != Kind::Folk && b.squads[i].alive > 0)
+        .collect()
 }
 
 /// The seen foe nearest `from` (ties by id), optionally only within `r`, skipping routers unless nothing else.
@@ -398,10 +410,10 @@ mod tests {
 
     #[test]
     fn parse_names() {
-        for n in ["garrison", "general0", "general1", "general2", "commander", "charge", "idle"] {
+        for n in ["garrison", "general0", "general1", "general2", "commander", "charge", "idle", "raiders"] {
             assert_eq!(BotKind::parse(n).unwrap().name(), n);
         }
-        assert!(BotKind::parse("raiders").is_err());
-        println!("bot names: 7 parsed, raiders refused until day 4");
+        assert!(BotKind::parse("pirates").is_err());
+        println!("bot names: 8 parsed, an unknown one refused");
     }
 }

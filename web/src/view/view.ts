@@ -40,7 +40,9 @@ export class View {
   danger = 0;
   /** Called after the camera and the sun are set for a frame, just before drawing (the figures pose here). */
   beforeDraw: (() => void) | null = null;
-  private readonly lights = new Float32Array(MAX_LIGHTS * 4);
+  /** The night's lights for the CELL pass: (x, y) in cell pixels, reach in art pixels, strength; `lightN` used. */
+  readonly lights = new Float32Array(MAX_LIGHTS * 4);
+  lightN = 0;
 
   constructor(parent: HTMLElement, readonly land: LandData, opts: ViewOpts) {
     this.canvas.style.display = 'block';
@@ -79,7 +81,7 @@ export class View {
       grey: this.grey,
       danger: this.danger,
       lights: this.lights,
-      lightN: 0,
+      lightN: this.lightN,
     });
   }
 }

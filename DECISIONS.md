@@ -1676,3 +1676,488 @@ map (squads 5–6, foes E13–E16, site 0, a bridge where its map has no water);
 `build` for the army, is now given to a company (above).
 **Spec:** contracts `Deed`; AGENTS.md rule 5 (model output is resolved, validated, then queued).
 
+
+## D-18 | 2026-10-29 | Day 4: input and marks (01-flow §2; 02-look §2, §7)
+**Summary:**
+- **The pointer state machine:** press, stroke, pan, pinch and drag, with the exact touch and mouse thresholds. Hit-testing is settled on press, against what was drawn.
+- **Every row of §2's tap and stroke tables** becomes a Command through `BattleView.issue`. A front is drawn at time ×0.3 with ghost bars from a sim `planFront` preview (checked equal to the real front). Also: the selection lapse, pause showing every order including waiting ones, and the keys.
+- **The 400 ms captain hold** calls `onCaptainHold`, for voice.
+- **Every mark of 02-look §7,** and the red X at every refusal.
+- **Facing fix:** withdrawing men face the squad, not their motion.
+- Built by a delegated agent; checked again before commit.
+**Acceptance (the agent's synthetic pointer runs):**
+- A 9 px slide on the captain is a tap: 8/8 on touch and on mouse.
+- Every drawn pixel of the captain hits him, at zooms 7–34.
+- Enemies in a melee: 20–21 of 21 tappable (the old bug was 2 of 9).
+- The captain wins 47 of 47 ties.
+- Shimmer with about 3,600 mark vertices: 0 bad frames at 7, 16 and 34.
+- Whole battles were played by mouse and by emulated touch.
+**Open:**
+- No face cards yet (no portraits).
+- On a 375 px phone the captain's touch reach covers about 2 tiles, which feels greedy.
+
+# Decisions: day 4, input and marks
+
+Choices made where the spec is silent, for the battle's touch and mouse input and the marks every order draws:
+`web/src/input/*`, `web/src/view/marks.ts`, `web/src/battle/{battle,order-marks,ui,records}.ts`, `web/src/main.ts`,
+`web/src/dev.ts`, `crates/sim-wasm/src/{input_api,frame,compat}.rs`, one line in `web/src/view/shaders.ts`, and the
+visibility of `Battle::open_near` in `crates/sim/src/battle/mod.rs`.
+
+### An order is applied at once, the bots thinking first
+**Decision:** every order the input gives goes through `BattleView.issue(deed, src)`: the Command is queued with
+`apply`, then `Battle.flush()` (new, input_api.rs) lets the bots think for this tick exactly as the next `step` would
+(a bot thinks at most once a tick, so that step does not think again) and applies the queue without stepping. The
+view re-reads the sim at once, so the order's marks, a refusal's red X and the paused view all show the new order
+in the same frame.
+**Why:** "Orders still work while paused" (01-flow.md §2): with no ticks running, a queued order would only land on
+unpause, and the paused view could not draw it. Letting the bots think first keeps the log (and so a replay) the
+one the next tick would have given: same commands, same order, same bot decisions.
+**Rejected:** applying only on the next tick (nothing shows in a pause); flushing without the bots (a bot would see
+the player's order a tick early, unlike in a replay that re-runs the bots).
+**Spec:** 01-flow.md §2 "Pause and keys"; 04-battle.md §1 "Orders are a queue".
+
+### A tap on the ground marches without fighting
+**Decision:** a tap on open ground is `move { to, fight: false }` (the army, or the selected company); a drag from a
+company or the captain the same along its route. A company stops to fight once it gets there (arrival is a hold).
+**Why:** the spec names no `fight` for a tap; voice's march defaults to `fight: false` (D-17), and the two must
+mean the same. Attacking is a tap on the enemy.
+**Spec:** 01-flow.md §2 "What a tap does"; 04-battle.md §5 "Who may engage".
+
+### Every order given uses up the selection
+**Decision:** any order the input gives deselects: a tap's, a drag's, a front's (a front orders every company, the
+selected one too), and tapping an order flag (which recalls that flag's company, selected or not). Pressing a
+company selects it at once; releasing that press keeps it selected; a tap on the selected company deselects. The
+lapse (7 s) does not run while paused; a company that routs or leaves the field is let go.
+**Why:** 01-flow.md §2 says a selected company's order "deselects it"; the front and the flag cells of the table are
+silent. The pause is for thinking, so a selection made in it should not blink away.
+**Spec:** 01-flow.md §2 "What a tap does", LAPSE.
+
+### Time slows only while a front is drawn
+**Decision:** `clock.drawing` (slow 0.3) is set for a front stroke only, not for a drag from a company or the captain.
+**Why:** 01-flow.md §2 and 04-battle.md §4 tie the slow time to drawing the front, whose ghost bars need reading.
+**Spec:** 04-battle.md §1, §4 "Preview while drawing".
+
+### The front's preview is the sim's planFront, ported and checked
+**Decision:** `Battle.plan_front_preview(team, line)` runs a copy of `planFront` (front.rs) that orders nothing and
+returns each company's bar (spot, facing, files, length, role) and the captain's spot. The test
+`preview_matches_the_front_obeyed` gives four lines on four armies and checks every bar against the order the real
+front then gives: 82 bars and taps, every spot, facing and frontage equal. Bar lengths: files × 0.72 for the line,
+3 for bows, 2.2 for horse, 4.2 for a beast; a horse or beast filling the line keeps its own; a foot company in the
+reserve gets 02-look's spear-and-shield 3. The captain's gold disc stands at his place behind the line even when the
+line fights (he rides from there).
+**Why:** `planFront` mutates the battle and `Battle` cannot be cloned; changing the sim beyond visibility was not
+mine. The test fails if the two drift.
+**Rejected:** applying the front to a copy of the battle (no `Clone`); replaying the log per stroke point (too slow).
+**Spec:** 04-battle.md §4; 02-look.md §7 "Front preview".
+
+### Hit-testing: mounted bodies, head heights, the oval
+**Decision:**
+- Head heights (tiles, from the figures' parts × FIG 1.32): foot 0.76, horse 1.04, the captain 1.12, a commander
+  ×1.16; blight-men 0.95, trolls 1.75, drakes 1.05, the broodlord 2.0.
+- A mounted figure (horse, the captain) is also measured to its horse's body, tail to nose (±0.42 tiles along its
+  facing at 0.45 high): the rider's segment alone left 29 of 385 pixels of the captain's horse out of reach at zoom 34.
+- Banner poles: 1.6 tall (the captain's 1.95, a beast standard 2.4) × the zoom's growth × 1.3 when selected, as drawn.
+- An order flag is measured from its foot to its top (1.15) and scores ×0.7.
+- A selected company's oval is the selection ellipse; a press inside it scores as if at the company's reach, so a man
+  actually nearer (an enemy in its melee) still wins.
+- Exact score ties go captain, flag, company, enemy.
+**Spec:** 01-flow.md §2 "Hit-testing".
+
+### Marks: widths, timings and faint marks
+**Decision:**
+- A ground ribbon is at least one art pixel tall on screen (2/s tiles: across the screen it is foreshortened by half);
+  the ink shows at least one pixel each side; an arrowhead at least 3 pixels; a refusal's X at least 4.
+- Order given: a fading dashed route (1.3 s, holding full for its first 35%) and a ring closing in (0.55 s); an attack's
+  red ring r 1.9 and a take's gold ring at the capture radius close in instead of the ping; a rally's big gold ring
+  r 4.2 on the captain; an order that moves no route (a wait, a change of way, a signal) pings the companies it names.
+- The refused X lasts 1.6 s, drawn for every `Refused` event of ours (taps, drags, voice, a waiting order that runs and
+  is refused), laid on the ground so it crosses at 45° on screen.
+- Faint marks: a detached company's dotted line to its flag at α .5; a waiting order's dotted line and a 0.7 ring
+  where it points at α .45 (.7 once its signal is given), and a dashed red ring round an "enemy near" trigger's
+  ground. When a waiting order fires, the company gets the order-given marks: the faint mark brightens.
+- The selection ellipse is the formation's extent along and across its facing plus 0.7 tiles (at least 0.9); it
+  blinks at 4 Hz for the last 1.5 s.
+- The order flag is a standing pennant: a wooden pole and a team-blue cloth with a cream edge, 1.15 tall, snapped to
+  the art-pixel grid like a figure and written to depth so it is outlined. It stands at the order's point: a move's
+  goal, a site, a foe's or a ward's centre (following it), a hold's post.
+- Pause draws, for every company, a dashed route to its target in its order's colour (cream, red for attack and
+  charge, gold for a site and for the captain's own route, the withdraw colour for recall, withdraw and regroup), its
+  arrowhead, and a red ring round an attacked foe; order lines start at the company's banner as drawn.
+**Why:** 02-look.md §7 gives the widths and colours but not durations, alphas or the flag's look.
+**Spec:** 02-look.md §7; 01-flow.md §2; 08-orders.md §1, §6.
+
+### The pause greys the world, not its marks
+**Decision:** marks write alpha 0 into the scene target; CELL (`shaders.ts`) skips the pause grey where alpha < 0.5.
+**Why:** "The world greys and every company's order is drawn": orders drawn in grey would not read. Nothing else in
+the scene writes an alpha below the alpha-test.
+**Spec:** 01-flow.md §2 "Pause"; 02-look.md §9.
+
+### Two-finger tap, hover, and keys
+**Decision:**
+- A two-finger tap's travel counts the first finger's own slide before the second came down, so a front cut short by a
+  second finger is not also a re-follow.
+- What the mouse is over is tested when it moves and every 8 frames under a still mouse; it widens a capture ring to
+  0.12 and grows a banner ×1.1.
+- V (talk) is voice's key; the input exports `onCaptainHold(fn)` / `inputHooks.onCaptainHold` for the 400 ms captain
+  hold ('start', then 'end' on release or a second finger) and `inputHooks.onMute` for M. N waits for the campaign.
+**Spec:** 01-flow.md §2 "Pointer state machine", "Pause and keys".
+
+### A withdrawing company's men face their foe, or the squad's facing
+**Decision:** in the frame packing, a man of a company under `Withdraw` never faces his motion: he faces his target if
+he has one, else the squad's facing (which turns toward the nearest foe), so he walks backwards (the `backing` bit).
+Test `a_withdrawing_company_faces_the_foe_and_walks_backwards`: 12 of 12 walking men face the squad's way and back.
+**Spec:** 08-orders.md §3 "withdraw"; DECISIONS.md D-16 "Open".
+
+### `Battle::open_near` is public
+**Decision:** its visibility only (`pub(crate)` → `pub`), so the preview snaps spots to open ground exactly as
+`planFront` does.
+**Spec:** AGENTS.md (the sim is the places agent's; visibility only).
+
+## D-19 | 2026-10-29 | Day 4: places, the night and field works (03-land §7–§8; 04-battle §7–§8; 02-look §3)
+**Summary:**
+- **The village under the torch:** houses burn on the spec's clock and fall killing their people. Taking the village frees the rest, and the freed fall in behind the captain.
+- **The ford:** civilians as Folk companies, raider waves and the `raiders` bot.
+- **The night:** torches as a rule, the relief from the east, and lights listed by the sim.
+- **The view:** medieval structures in the holder's colours, flags climbing, fire, smoke, embers and ruins, the ford's wagons, the night pass fed with real lights, and field works rising and falling with a bridge deck.
+- Built by a delegated agent; checked again before commit.
+**Measured** (100 seeds each):
+
+| Battle | idle | commander | charge |
+|---|---|---|---|
+| keep | 0% (was 99%) | 26% | 17% |
+| town | 0% | 27% | 22% |
+| ford | **16% (miss)** | 52% | 22% |
+| field | 5% (miss) | 31% | 21% |
+
+- Every battle ends; the jitter gates pass.
+- `harness places`: 9/9.
+- Existing goldens unchanged; new town and ford fixtures match natively and in WASM.
+**Open** (day 5 balance):
+- Ford idle 16%; the commander at 26–27% on keep and town.
+- The town is freed in only 3% of the commander's battles.
+- Hold-the-line waves not done.
+- `BattleView` needs a public ground hook (places wraps a private one).
+- Civilians carried a company banner: fixed at commit in `records.ts`. The voice field already leaves them out.
+
+# Decisions: day 4, the places (04-battle §7–§8; 03-land §7–§8; 02-look §3; 01-flow §4; 08-orders §7)
+
+Code: `crates/sim/src/battle/{places,place_checks}.rs`, `crates/sim/src/bots/raiders.rs`, `crates/sim/src/tune.rs`
+(`PlacesTune`: `TownTune`, `FordTune`, `NightTune`; `RaidersTune`), small hooks in `battle/{mod,outcome,sight,setup,
+order,orders,anchor,front,combat,ride}.rs` and `bots/{mod,general}.rs`, `crates/harness/src/{main,sweep}.rs`,
+`crates/sim-wasm/src/places_api.rs`, `web/src/view/places/*`.
+
+### Companies that join a battle are spawned at the start of a tick
+**Decision:** the ford's groups and waves, the night's relief and the freed are added (`setup::spawn`) at the start of
+`tick_once`, after the commands and before the neighbour grid, so every per-tick table (`Scratch`, the grid) has room
+for them. A capture that frees a village queues its company for the next tick.
+**Why:** adding a squad in step 9 left step 10 (morale) indexing tables sized for the old count.
+**Rejected:** resizing the per-tick tables mid-tick.
+**Spec:** 04-battle.md §1 "Tick order" (step 9 decides when; the joining is one tick later at most).
+
+### The order the town's houses burn in
+**Decision:** a seeded order (`jitter(seed, house, 201)`), fired at 22 + 26·k s. Each burns 24 s, then falls in and
+its people die (`HouseLost`). The houses stand where 03-land §7 puts the town's five (offsets from the site).
+**Why:** the spec gives the times, not which house; the layout gives the places, and the sim needs them for the fires'
+sight and light.
+**Rejected:** a fixed order (every town would burn the same way).
+**Spec:** 04-battle.md §8 "Village under the torch"; 03-land.md §7 "Town".
+
+### Taking the town: who is freed, and who falls in
+**Decision:** when the town's owner becomes the warband (its capture, as a holdfast), every house still standing or
+burning gives up its people (a burning one is doused, smoking 12 s); `Freed` carries the count. `min(6, freed)` of them
+fall in behind the captain as a levy company with no commander (a plain banner: records.ts draws a team-0 levy in
+linen), marked `freed` (the figures' recruit bit 25: their own clothes), at the reserve's station (0.4 behind, 3.4 to
+the side). They do not defend the captain (as the reserve). No fires start once the town is taken.
+**Why:** 01-flow §4 "a village freed in battle sends 6 men, who fall in behind the captain under a plain banner".
+Taking the town ends the battle (it is a holdfast), so they join as the field falls quiet.
+**Rejected:** freeing the neutral villages of a keep map (they start neutral, not held by the blight; that would add
+two companies to every keep battle); all freed people as soldiers (the spec says 6).
+**Spec:** 04-battle.md §8; 01-flow.md §4 "The freed".
+
+### The ford: civilians are team-0 companies of folk
+**Decision:** each group is a `Folk` company of 5 on the warband's side, detached, walking `Move` to the west exit by
+way of its ford (alternate groups the far ford). Its pace is set each tick: 0.95, or 1.6 with a foe within 5 (plus its
+spread) of its centre (its `spec.speed`, which every pace rule reads). A company that deals no harm never engages,
+strikes or looses (`Battle::rules`), defends nobody (`ward_point`), and never breaks (the folk unit's `never_routes`).
+They take no orders (`own` refuses them), are left out of "everyone", rallies, fronts, regrouping, the captain's ride
+and the bots' companies, and are never held back by a held start.
+**Why:** the sim already moves companies on paths with formations and fog; a separate walker would duplicate that.
+**Rejected:** a third team (fog, captains and outcomes are two-sided everywhere).
+**Spec:** 04-battle.md §2 "folk (civilians)", §8 "Ford".
+
+### The ford: when a group has left, and who wins
+**Decision:** a group has left the field when its men's centre is within 1.5 of the exit (`leave_r`, as "home" is
+1.5): its men leave alive (as fleeing men do: `alive = false`, never died) and are counted saved (`Saved`, a = men). A
+group with nobody left is done too. When every group has come and is done, the warband wins (`Saved`, reason 8) with
+at least one saved, and the blight wins (`NoneSaved`, reason 9) with none.
+**Spec:** 04-battle.md §8 "Ford".
+
+### The ford: the far crossing
+**Decision:** a far group goes by the far route's ford tile off the main ford's rows (the eastern of the two), so it
+comes at the narrow ford from the east bank.
+**Why:** the map's far route (A* to the narrow ford, then to the exit) sometimes reaches the narrow ford by way of the
+main one; its first ford tile is then the main ford's.
+**Spec:** 03-land.md §3b.
+
+### The raiders: no broodlord, waves of three, from the corners
+**Decision:** at the ford the blight has no army at the start and no broodlord: four waves at 14, 37, 67 and 97 s of
+three companies each — [drake, blight-men, blight-men], [blight-men, troll, blight-men], [drake, drake, blight-men],
+[troll, blight-men, blight-men] — entering alternately at the north-east and south-east corners (2.5 in from the east
+edge, 3.5 from the north or south, in a line westward along the edge).
+**Why (measured, 100 seeds each, after the civilians fixes):** two a wave (8 companies) let doing nothing win 62% and the
+commander 95%; three a wave gives commander 52%, charge 22%, idle 16%; four a wave crushes the commander (17%) while
+idle stays ~19%. A broodlord on the field would make killing him the ford's quickest win.
+**Rejected:** the keep's nest on the field from the start (nothing for the waves to be); waves from the middle of the
+north and south edges (idle 9–27%, no better).
+**Spec:** 04-battle.md §8 "Ford" (the waves' times), §7 "Raiders".
+
+### The raiders' bot
+**Decision:** `raiders` thinks every 1.5 s, through its own fog. Horse go for the nearest civilians; the blight has no
+horse, so its hunters, the packs (drakes), take that rule. Archers shoot troops within 9, else civilians. Foot go for
+troops within 4, or nearer than 0.8 of the civilians' distance, else civilians. With nothing seen a company marches on
+the main ford, fighting. It tears down works it sees (`raid_works`).
+**Spec:** 04-battle.md §7 "Raiders".
+
+### The night: torches, the relief, the level
+**Decision:**
+- **Torches** are rules, not looks: at nightfall our companies (the captain too) light theirs in order across the army's
+  heading (left to right), at 0.7 + 0.45·k s; the enemy's all at 2.4 s; a company that joins at night is lit at once
+  (the enemy's) or 0.7 s after (ours). The bearer is the commander while he lives, else the living man of the lowest
+  slot.
+- **Sight** (03-land §8): each side's fog is stamped, at night, round every lit torch of the other side's companies
+  (their centre, spread + 0.8); burning houses are stamped radius 4 for both sides, day or night.
+- **The relief** comes 6 s after nightfall: `round(0.5·n)` of the garrison's n starting companies, spread evenly over
+  their units (the k-th is unit `⌊(2k+1)·n/2m⌋`), at the east edge (1.5 in) round the keep's row, detached. The garrison
+  bot orders them like its own (at night: attack the nearest foe it sees).
+- **The level** is a pure function of the clock in the sim: `1 − e^(−0.7·t)` after nightfall, times `e^(−0.9·t)` after
+  dawn (02-look's easing, done once where the view can read it and a pause freezes it).
+- **Dawn** that ends a battle by its time limit also ends the night (`dawn_at`), so the level eases back.
+**Why:** D-11 open item: doing nothing won every keep battle at dawn because the garrison could not see the warband at
+night. Measured (100 seeds): idle at the keep and the town wins 0 (91 and 93 captains fell); no battle is decided at
+dawn any more, by anyone (the commander's old dawn wins were mostly a lone captain with no army left).
+**Spec:** 04-battle.md §8 "Night"; 02-look.md §3 "Torches"; 03-land.md §8.
+
+### The commander keeps its captain out of the fight at night
+**Decision:** the warband's commander bot keeps its captain back all night (skill 2's "captain out" rule, applied from
+nightfall), since at dawn a living captain wins.
+**Why:** a sensible general's night. It changed nothing measurable (26% at the keep): by nightfall its army is usually
+spent.
+**Spec:** 04-battle.md §7 "General", §8 "Night".
+
+### Lights the sim sends
+**Decision:** `Battle::lights` lists every light now, with 02-look's table: lit torches (2.6, 1), burning houses (reach
+1.5 → 4 over 6 s, 1.15), smouldering ruins (1.3, 0.6) for the 74 s a fallen house smoulders, and fires (2.2, 0.9): each
+shrine's flame and the ford's wagons. Each carries its kind and what it belongs to (the bearer's soldier, the house,
+the site).
+**Spec:** 02-look.md §3 "Lights"; 03-land.md §7.
+
+### The places in the WASM API
+**Decision:** `places_sync()` fills five flat f32 buffers (sites, houses, groups, lights, works; strides 8, 8, 8, 6,
+16) kept in a thread-local in `places_api.rs` (the wasm `Battle` struct is in lib.rs); `places_ptr/len/stride` give the
+views. `places_info()` is the static layout (JSON, once). `night_level()`, `night_s()`. `retune(json)` (dev only)
+re-opens the same battle under a tuning override, for shots of rules far apart in time.
+**Why:** no allocation per frame once the buffers have grown; lib.rs stays untouched.
+
+### The view
+**Decision:**
+- One merged body mesh per place plus one owned mesh (painted white, coloured by the holder) through the fog patch's
+  exact faces (pixel-stable). Ours `0x1f5a80`; the blight's places are corrupted: `0x4f3330` with their shingle bands
+  glowing ember `0xc84a1c` instead of ×0.8; nobody's: thatch for villages, `0x6b5a48` for the fort culture.
+- The keep shows its holder by its cones and roof (the medieval set) and two cloth hangings by the gate (the keeps'
+  rule).
+- The town's houses keep thatch roofs (03-land: "lerps from its thatch colour"); the town's holder shows on the
+  chapel's roof and the belfry's spire. A fallen house hides its walls and roof and shows its ruin: wall stubs turned
+  `0x3a332e`, a charred floor and three charred beams.
+- Fire: 8 roof flame boxes per burning house (ramping over 6 s), smoke every 0.1 s and embers every 0.12 s; a
+  smouldering ruin smokes every 0.3 s with a low ember; a doused house smokes 12 s. Smoke and embers are points snapped
+  to whole art pixels, depth-tested but not written, fading by the Bayer dither.
+- Torches: the flame (0.07×0.11×0.07 × FIG, flickering `0.8 + 0.35|sin(13t + id·1.7)|`) is held out before the bearer's
+  left hand, since his company's banner stands 0.3 to his left; the light pools sit at the sim's positions.
+- Works rise stage by stage (stakes one by one, a barricade's posts then logs, a bridge plank by plank, a tower's legs
+  then platform, parapet and roof) and break down to a third of their height over 0.8 s when razed.
+- Men on a bridge's laid deck stand on it: the battle view's private ground function is wrapped at install
+  (`installPlaces`), pending a hook.
+- At the ford the enemy's bot defaults to `raiders` (unless `?enemy=`), set by `installPlaces`.
+- The CELL pass's lights: `View.lights`/`lightN` are now public (view.ts, two lines); the night level is written to
+  `nightK` only when the sim's level changes, so `__v.night(k)` still works by day.
+
+## D-20 | 2026-10-29 | Day 4: voice end to end in the game (06-voice §1–§3, §4b, §7; 05-sound §4)
+**Summary:**
+- **Hold V, or the captain for 400 ms:** time ×0.3, a mic ring, and the brain reads the field at hold start. On release: local whisper STT → fast path → Glimmer → resolve → `issue`, with the same marks as a tap.
+- **Answers:** each company answers with its own synth horn from where it stands. Unclear speech gets a red X and the query horn.
+- **Also:** typed orders in a new 5×7 bitmap font; named groups and waiting orders fed back; `?brain=` fallback with a 2.5 s abandon.
+- **Feature names** are generated in the sim (`map/names.rs`). Voice orders are logged to `out/voice-log`.
+- `npm run dev:https` (port 5174) serves phones.
+- Built by a delegated agent; checked again before commit.
+**Measured** (the agent, 47 WAV utterances in live battles):
+- Release to marks: p50 0.91 s, p95 2.3 s (the spec's Mac target is 1.8 s p50).
+- STT: p50 91 ms. Brain: p50 0.91 s.
+- 31 of 35 judged orders carried out correctly (89%); typed 5/5.
+- **My check:** typed orders through the live page (fast path, brain off) carried out with their marks, and no console errors.
+**Open:**
+- **Brain stability:** with the DFlash drafter, llama-server crashed once and hung once when two requests hit slot 0 together. The game sends one at a time, but this must be settled before a live demo: drafter off for the demo, or a request lock in the proxy.
+- The Meta keys (Muse Voice Transcribe format, hosted brain URL).
+- Phone HTTPS not yet tried on a device.
+- Horns use only D and A (05-sound §1), where the §4 call table also lists C, F, G and E.
+
+# Decisions: day 4, voice in the live game (06-voice §1–§3, §4b, §7; 05-sound §4; 08-orders §9; D-07, D-17)
+
+Choices made where the spec is silent, while wiring voice into the live battle. Code: `crates/sim/src/map/names.rs`,
+`crates/sim-wasm/src/voice_api.rs`, `web/vite.config.ts`, `web/src/voice/live/*`, `web/src/sound/*`,
+`web/src/view/font5x7.ts`, and small changes to `web/src/voice/{field,resolve}.ts` (fixtures unaffected).
+
+### Feature names: one plain word per feature, from pools, with distinct first sounds
+**Decision:** `sim::map::names::name_features(map, companies)` names every site, the river, each ford, the 3 most
+prominent hills (radius × height) and the 4 largest woods (4-connected forest of ≥ 8 tiles). Each kind has a pool of
+plain words (keep NEST; town TOWN; villages MILL, BARN, FOLD, CROFT, GRANGE, THORPE, KILN, DAIRY, …; shrines SHRINE,
+CAIRN, CHAPEL, …; towers SPIRE, LOOKOUT, BEACON, …; fords FORD, WADE, SHALLOWS, SHOAL, STEPS, GRAVEL; hills RIDGE,
+KNOLL, TOR, BARROW, FELL, CRAG, …; woods OAKWOOD, ASHWOOD, ELMWOOD, BIRCHES, …). The keep, the town, the river and the
+widest ford always get their pool's first word (NEST, TOWN, RIVER, FORD); the others start at
+`hash32(map seed, index, salt) % pool` and take the first word that is free, not a command/kind/foe/work word, not
+like a company's name (same word, one edit away, or same onset and consonants), and whose first sound (leading
+consonant cluster with look-alike spellings folded, or first vowel) no other feature has; failing that, the first
+free word. Sites are named first (id order), then the river and fords, hills, woods.
+**Why:** single words survive speech-to-text, the canonicaliser and the grammar untouched; distinct first sounds keep
+"the kiln" and "the crag" apart by ear. Over 240 maps (4 kinds × 3 widths × 20 seeds): 2,874 names, 25 sharing a
+first sound (the pools run short on 80-wide keep maps with 11 sites), none numbered.
+**Rejected:** two-word names (NORTH HILL, MILL STREAM in §4b's examples: they would need multi-word canonicalising and
+show twice in `NEAR_…` and `breaks:…` enums); naming every wood (up to 14 on an 80-wide map: tokens for features no
+one says); names independent of the companies (a TOR next to a TOM).
+**Spec:** 06-voice §4b.
+
+### The river is "RIVER", given by its stretch near the army
+**Decision:** the one river is always RIVER; in the field its columns are the westmost and eastmost water columns over
+the rows within 8 of the army's line centre, and its fords are listed by row and also as places of type `ford`.
+**Why:** a player says "the river"; the generator lets the river drift ±1 a row across 20% of the map's width, so the
+whole span put "our bank" up to 6 tiles from the water by the army (06-voice §6 resolves banks from x0/x1).
+**Spec:** 06-voice §4b, §6.
+
+### Fords are places, not sites; place ids are the sim's site ids
+**Decision:** `FieldPlace.site` carries the sim's site id (null for a ford); the resolver uses it for `take`, and taking
+a place that is not a site is holding it (a move there ready to fight). Without `site` (the eval fixtures) the place's
+index is used as before. `Field.size` (the map in tiles) keeps routes and relative points half a tile inside the map
+(it was putting "round the left" via points at y = −0.43).
+**Why:** a Take of a ford would have named a wrong or missing site; the fixtures must resolve exactly as before
+(both suites re-judged on cached replies: 20/20 and 145/146, unchanged).
+**Spec:** 06-voice §6.
+
+### What the live field shows (the player's fog)
+**Decision:** our companies on the field (not fled or destroyed) at their men's centre, rounded to whole tiles; morale
+only below 0.95; the captain's hp. Foes: only squads with a man in sight now, counted and placed by the seen men
+only, state `marching <compass>` (mean velocity over 0.2 t/s), `fighting <our company>` (its threat), `routing`,
+`idle`. A place's holder is shown once its ground has been seen. Works: ours, and the foe's in sight; a watchtower is
+the TOWER, a second work of a kind is numbered (STAKES2). Facing and army left are 8-way compass words. With nothing
+seen, the text says `FOES SEEN: none` (the fixtures always see foes, so their text is unchanged).
+**Why:** "the model must not know more than the player"; seen-men counts and centres are what the screen shows.
+**Spec:** 06-voice §4b; 08-orders §7.
+
+### Voice orders go in through `BattleView.issue`; `apply_deeds` stays for batches with a note
+**Decision:** the live game gives each resolved deed, in the batch's order (direct deeds first, waits after, D-17), to
+the input layer's `BattleView.issue(deed, 'voice' | 'typed')`, which applies it at once and draws the order-given
+marks from the sim's own order state, exactly as a tap or drag does; the sim's refusals are crossed there too. The
+WASM `apply_deeds(json, src, note)` queues a whole batch at the current tick with the voice log as each command's
+`note` (tested natively); the live path does not use it. Every voice order is logged in the page
+(`__v.voiceLog()`) and appended to `out/voice-log/voice.jsonl` by the dev server: `{tick, team, deed, src, heard,
+reply, brain, ms}` per deed, plus a per-utterance record with the stt/brain/end-to-end times and the field text.
+**Why:** 06-voice §3 "its marks draw exactly as a tap or drag would"; the input layer made `issue` the one way in.
+**Spec:** 06-voice §3, §7; ENGINE.md rule 1.
+
+### The field is read once, when the hold starts
+**Decision:** the field snapshot taken when the captain starts to hold (or the typed line opens) is the one warmed
+into the brain, sent with the words, and resolved against.
+**Why:** the warm only pays if the request's prefix is byte for byte the warmed one (D-07, D-17); measured, an order
+then reads 9–14 new tokens instead of 180–400. Positions are at most ~1 s of slowed game time old.
+**Spec:** 06-voice §3; D-07 "warm".
+
+### One request at a time on the voice slot
+**Decision:** the client sends brain requests to slot 0 strictly one after another; a warm is skipped while another
+request runs or when the slot already holds that very field; an order waits at most 4 s for a warm still reading,
+else it is abandoned (query horn). A tab only warms at load when it is visible.
+**Why:** llama-server with the DFlash drafter aborted with `GGML_ASSERT(batch.size() > 0)` when a second request
+arrived for slot 0 while it was still reading a prompt (two warms 1 s apart); later, with the eval and other tabs on
+slot 0 at once, a task hung in "processing" for minutes until the server was restarted. Background tabs on the shared
+dev server were warming their own fields into slot 0 on every hot reload, which evicted the playing tab's field
+(seen in the server log; it caused the one abandoned order and a 2.2 s one in the measurements).
+**Rejected:** the broodlord's slot 1 for overflow (cold prefix: 15–20 s).
+**Spec:** 06-voice §2 (slots), §8.
+
+### The fallback chain: a brain that fails is skipped, a slow one abandons the order
+**Decision:** `?brain=local` tries local then hosted; `?brain=hosted` hosted only; `?brain=off` the fast path only. A
+brain that errors (unreachable, 5xx) is skipped for 15 s and the next is tried at once; a request over 2.5 s is
+abandoned and the order with it (query horn), without trying the next brain. `?brainms=` overrides the 2.5 s for
+measuring. Without HOSTED_BRAIN_URL, `/brain-hosted` answers 503 at once.
+**Why:** a second brain after 2.5 s would make the order 5 s late; an unreachable one costs nothing to skip.
+**Spec:** 06-voice §2 "Fallback chain".
+
+### Speech-to-text: whisper-server started on demand, Muse Voice Transcribe behind one function
+**Decision:** `/stt` POSTs the WAV to a `whisper-server` (small.en, port 8178, 4 threads, no timestamps) that the dev
+server starts on the first `/stt/warm` (sent when a hold starts) and keeps; the field's names (companies, groups,
+places, ground, works, title case) and the foe and kind words are the per-request prompt. `whisper-cli` is the
+fallback if the server will not start. `STT_ENGINE=meta` (the default once META_API_KEY is set) sends the WAV to
+META_STT_URL as a multipart `file`/`model`/`prompt` request with the key as a bearer token, falling back to local on
+any failure; the request shape is a placeholder until the API is confirmed. Keys are read from the repo's `.env` in
+the dev server only (`.env.example` lists them; `.gitignore` now keeps `.env.example`).
+**Why:** measured, small.en transcribes a 2–3 s clip in 70–110 ms on this Mac once loaded, under the spec's 0.3–0.7 s
+for the API; starting it at hold start hides the ~1 s model load.
+**Spec:** 06-voice §2 "Speech-to-text".
+
+### HTTPS for phones without a new package
+**Decision:** `npm run dev:https` (WARDENS_HTTPS=1) serves on 0.0.0.0:5174 over HTTPS with a self-signed certificate
+for localhost and the machine's LAN addresses, made once with the system's `openssl` into `out/certs/`.
+**Why:** browsers give the microphone only to HTTPS or localhost. The dependency is the system `openssl` binary
+(present on macOS and Linux), not an npm package; the phone asks to trust the certificate once.
+**Rejected:** `@vitejs/plugin-basic-ssl` (a new npm dependency for the same certificate).
+**Spec:** 06-voice §3 "It needs HTTPS or localhost".
+
+### The microphone is opened for each hold
+**Decision:** each hold calls getUserMedia with the spec's constraints and stops the tracks on release; an inline
+AudioWorklet box-averages the context's rate to 16 kHz and posts PCM and an RMS level; the ring maps −50…−10 dBFS
+to 0…1. The WAV is 16-bit mono.
+**Why:** "never record outside the hold": a stream left open shows the browser's recording light between orders.
+The re-open costs ~0.1 s at the hold's start, while time is already slowing.
+**Spec:** 06-voice §3 "Microphone details".
+
+### Horn calls: Web Audio synths in D and A only
+**Decision:** `web/src/sound/horns.ts` plays the five company calls, horn_army, horn_rally and horn_query as small
+synths (detuned saws, a sub-octave triangle, a filter that opens on the attack, a late vibrato, a seeded noise room),
+with the spec's rhythms, tempos, attacks, releases, rooms and levels (horn 0.2, army 0.22, rally 0.28, query 0.18;
+sfx bus 0.85, master 0.9). The pitches are D and A only: call 0 `[a2 d3@3]`, 1 `[d3 d3 d3 a3@3]`, 2 `[a3@2 ~ d4@3]`,
+3 trumpet `[a3 d4 a4 d5@4]`, 4 trombone `[d2@3 a2@3]`; recalls reversed; horn_army's lower line is `[a2@2 d3@4]`.
+A company's horn is panned by `across × 0.6` from where it stands, with no distance fade; the army's, the rally and
+the query are not positioned. Addressed companies answer 0.35 s apart. A commander gets the lowest call no other
+company on the field holds and keeps it by name (localStorage).
+**Why:** the brief and 05-sound §1 ("pitched SFX use only the notes D and A"); the §4 table's C, F, G and E and
+horn_army's F contradict §1. Day 6 replaces the synths with rendered samples behind the same functions.
+**Spec:** 05-sound §1, §2, §4; 06-voice §3.
+
+### Time stays slow from the hold until the orders land
+**Decision:** the clock's new `listening` flag (target 0.3, as `drawing`) is set while the captain holds, while the
+typed line is open, and after release until the orders land or 3 s pass, whichever is first.
+**Why:** 06-voice §3; typing an order is the same pause for thought as speaking one.
+**Spec:** 06-voice §3 "While listening", "After release".
+
+### The typed line is on by default until there are settings
+**Decision:** Enter opens the line (5×7 bitmap font, cream on ink, at the bottom edge, at the art-pixel scale), it
+takes every key while open (Space types a space), Enter sends, Escape closes; `?typed=0` turns it off. The brain reads
+the field when the line opens.
+**Why:** the spec puts it behind a setting, and there is no settings screen yet; the judges' noisy hall needs it now.
+**Spec:** 06-voice §3 "Typed orders"; 01-flow §6 "Fonts and words".
+
+### The listening ring and the refusal cross use the battle's marks
+**Decision:** the ring is a per-frame drawer on the battle's `Marks`: gold, 0.14 wide, radius 0.8 + 1.6 × level with a
+±0.06 pulse at 7 rad/s, dither alpha 0.55 + 0.45 × level. A refusal in the resolver (a company that cannot obey, a
+missing target) is crossed at its target if one was understood, else at the captain; unclear words at the captain;
+the query horn sounds once for any refusal in the batch, after the other horns.
+**Spec:** 06-voice §3; 02-look §7.
+
+### Waiting orders and groups
+**Decision:** only orders waiting on the captain's signal are listed in `Field.waiting` (`who` as said, `<verb>
+<target> on mark`, `n`); each is dropped when the sim no longer holds a pending deed with its queued tick and signal.
+Groups are kept from each resolution and forgotten when all their companies are gone.
+**Why:** a signal can only release signal waits; other triggers fire by themselves.
+**Spec:** D-17 "the game must store groups and waiting orders"; 08-orders §6.
+
+### The captain hold is the input layer's
+**Decision:** voice binds `onCaptainHold((phase) => …)` from `web/src/input/hooks.ts` ('start' begins listening,
+'end' releases), and V itself.
+**Spec:** 01-flow §2; 06-voice §3.

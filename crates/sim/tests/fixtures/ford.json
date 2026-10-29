@@ -1,0 +1,9 @@
+{
+  "seed": 5,
+  "map": { "kind": "ford", "width": 48 },
+  "tick": 4500,
+  "bots": [{ "team": 0, "bot": "commander" }, { "team": 1, "bot": "raiders" }],
+  "log": [
+    { "tick": 30, "team": 0, "deed": { "do": "build", "who": { "t": "squad", "id": 1 }, "work": "stakes", "at": { "x": 18.5, "y": 15.5 }, "face": 0.0 }, "src": "typed" }
+  ]
+}

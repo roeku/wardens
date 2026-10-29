@@ -402,7 +402,8 @@ impl Battle {
 
     pub(super) fn walk(&mut self, i: usize, goal: P, speed: f64, gate: bool, facing: Facing) {
         let mv = self.tune.movement.clone();
-        let goal = self.open_near(self.held_clamp(self.squads[i].team, goal));
+        // The ford's civilians are nobody's to hold back (places.rs).
+        let goal = if self.civilian(i) { self.open_near(goal) } else { self.open_near(self.held_clamp(self.squads[i].team, goal)) };
         let here = P::new(self.squads[i].x, self.squads[i].y);
         let replan_ticks = (mv.replan_s / DT).round() as u32;
         let s = &self.squads[i];

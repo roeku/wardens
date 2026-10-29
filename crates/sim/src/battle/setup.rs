@@ -99,9 +99,20 @@ impl Setup {
         Setup { warband: warband(), garrison, general: Some(Company::new(Kind::Captain, "GENERAL")), mirror: true, held: false }
     }
 
-    /// The setup a map kind opens with when nothing else is given: the blight, as an army on the open field.
+    /// The ford (04-battle.md §8 "Ford"): the warband alone at first. The blight comes as raiders, in the waves of
+    /// `FordTune`, with no broodlord of its own (out/decisions-d4-places.md).
+    pub fn ford() -> Setup {
+        Setup { warband: warband(), garrison: Vec::new(), general: None, mirror: false, held: false }
+    }
+
+    /// The setup a map kind opens with when nothing else is given: the blight, as an army on the open field, as
+    /// raiders at the ford, holding the place otherwise.
     pub fn for_map(kind: MapKind) -> Setup {
-        if kind == MapKind::Field { Setup::field() } else { Setup::default() }
+        match kind {
+            MapKind::Field => Setup::field(),
+            MapKind::Ford => Setup::ford(),
+            MapKind::Keep | MapKind::Town => Setup::default(),
+        }
     }
 
     /// A setup by name: `blight` (or empty) is what the map kind opens with; `mirror` is the human field.
@@ -229,9 +240,18 @@ fn stations(b: &Battle, companies: &[Company]) -> Vec<((f64, f64), (f64, f64))> 
 
 /// Adds a company (its commander as soldier 0, with 3× hp) at `at`, every man in his slot. Returns its index.
 fn add(b: &mut Battle, team: Team, c: &Company, at: P, facing: f64, stations: ((f64, f64), (f64, f64))) -> usize {
+    spawn(b, team, c, at, facing, stations, None)
+}
+
+/// `add` during a battle (day 4's places: the ford's civilians and raiders, the night's relief, the freed), with
+/// `men` in place of the unit's own count when given.
+pub(super) fn spawn(b: &mut Battle, team: Team, c: &Company, at: P, facing: f64, stations: ((f64, f64), (f64, f64)), men: Option<u16>) -> usize {
     let kind = b.tune.unit_kind(c.unit);
     // Tune::with_override checks every unit, so this falls back only for a hand-built Tune.
-    let spec = b.tune.unit_spec(c.unit).unwrap_or_else(|_| b.tune.kinds.get(kind).clone());
+    let mut spec = b.tune.unit_spec(c.unit).unwrap_or_else(|_| b.tune.kinds.get(kind).clone());
+    if let Some(n) = men {
+        spec.men = n.max(1);
+    }
     let id = b.squads.len() as SquadId;
     let max_morale = b.tune.rank.morale_base + b.tune.rank.morale * c.rank as f64;
     let hp = spec.hp * (1.0 + b.tune.rank.hp * c.rank as f64);

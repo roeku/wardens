@@ -5,6 +5,7 @@
   "scripts": {
     "sim": "wasm-pack build crates/sim-wasm --target web --out-dir ../../web/src/sim-pkg --release",
     "dev": "vite web",
+    "dev:https": "WARDENS_HTTPS=1 vite web",
     "build": "npm run sim && npm run typecheck && vite build web",
     "typecheck": "tsc -p web && tsc -p web/tsconfig.node.json && tsc -p tools",
     "test": "cargo test && npm run test:wasm",

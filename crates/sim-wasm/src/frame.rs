@@ -98,8 +98,10 @@ impl Frame {
             let routing = s.state == SquadState::Routing;
             let aim = if m.alive { compat::target(b, k).and_then(|j| b.soldiers.get(j)).map(|t| (t.x, t.y)) } else { None };
             // 04-battle.md §9's priority: a breathing beast faces its prey (a drake hunting keeps its eyes on it,
-            // springing back included); else the motion when moving; else the target; else the squad's facing
-            let moving = m.pace > FACE_MOTION && (m.vx != 0.0 || m.vy != 0.0);
+            // springing back included); else the motion when moving; else the target; else the squad's facing. A
+            // withdrawing company falls back still facing the foe (08-orders.md §3 "withdraw", DECISIONS.md D-16):
+            // its men face their foe or the squad's facing, never their motion, and so walk backwards.
+            let moving = m.pace > FACE_MOTION && (m.vx != 0.0 || m.vy != 0.0) && !compat::withdrawing(s);
             let face = match aim {
                 Some((ax, ay)) if compat::breathes(s) => sim::math::atan2(ay - m.y, ax - m.x),
                 _ if moving => sim::math::atan2(m.vy, m.vx),
@@ -117,8 +119,9 @@ impl Frame {
                 | ((s.kind == Kind::Captain) as u32) << 24
                 | (s.rank as u32 & 3) << 26
                 | (compat::engaged(b, k) as u32) << 28
-                | (backing as u32) << 29;
-            // TODO(day 4): bit 25 recruit, once freed villages add men.
+                | (backing as u32) << 29
+                // the freed fall in in their own clothes (01-flow.md §4 "The freed"; places.rs)
+                | (s.freed as u32) << 25;
             self.su32[k] = bits;
             self.strikes[k] = m.strikes;
             let o = k * sb::F32_FIELDS;
@@ -297,5 +300,35 @@ mod tests {
         let backing = f.su32[..f.soldiers].iter().filter(|&&w| (w >> 29) & 1 == 1).count();
         assert_eq!(backing, 1, "nobody else walks backwards");
         println!("backing: soldier {k} facing {face:.3}, {backing} backing");
+    }
+
+    /// D-16's open item: a withdrawing company walks back facing the foe, so its men are drawn facing the squad's
+    /// facing (or their foe), walking backwards, never facing their motion.
+    #[test]
+    fn a_withdrawing_company_faces_the_foe_and_walks_backwards() {
+        use sim::contracts::{Command, Deed, Source, Who};
+        let mut b = battle("default");
+        let id = b.squads.iter().position(|s| s.team == 0 && s.kind == Kind::Spear).unwrap();
+        b.apply(Command { tick: 0, team: 0, deed: Deed::Withdraw { who: Who::Squad { id: id as u16 }, to: None }, src: Source::Voice, note: None });
+        b.step(45);
+        assert!(compat::withdrawing(&b.squads[id]), "still withdrawing: {:?}", b.squads[id].order);
+        let mut f = Frame::new(&b);
+        f.sync(&b, 0);
+        let s = &b.squads[id];
+        let (mut moving, mut facing, mut backing) = (0, 0, 0);
+        for &k in &s.soldiers {
+            let m = &b.soldiers[k];
+            if !m.alive || m.pace <= FACE_MOTION || m.target.is_some() {
+                continue;
+            }
+            moving += 1;
+            let face = f.sf32[k * sb::F32_FIELDS + sb::FACE] as f64;
+            facing += ((face - s.facing).abs() < 1e-5) as u32;
+            backing += (f.su32[k] >> 29) & 1;
+        }
+        assert!(moving > 0, "the company walks back");
+        assert_eq!(facing, moving, "every walking man faces the squad's facing");
+        assert_eq!(backing, moving, "and walks backwards");
+        println!("withdraw: {moving} men walking back, {facing} facing the squad's way, {backing} backing");
     }
 }

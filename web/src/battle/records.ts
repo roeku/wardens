@@ -189,6 +189,8 @@ export class Records {
       }
       this.seen[j] = 1;
       const kind = KIND_ORDER[qb.kind(bits)];
+      // Civilians crossing the ford are not a company: no banner over them (04-battle.md §8).
+      if (kind === 'folk') continue;
       const r = (this.bannerPool[b] ??= newBanner());
       this.banners[b++] = r;
       r.id = j;
@@ -210,6 +212,12 @@ export class Records {
       r.routing = state === ST_ROUTING;
     }
     this.banners.length = b;
+  }
+
+  /** The middle of company j's living men as built this frame (sim tiles), or null if none live. */
+  centre(j: number): { x: number; y: number } | null {
+    const n = j < this.count.length ? this.count[j] : 0;
+    return n > 0 ? { x: this.sumX[j] / n, y: this.sumY[j] / n } : null;
   }
 
   private ensure(q: number): void {

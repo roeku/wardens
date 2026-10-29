@@ -5,7 +5,7 @@
 
 use std::thread;
 
-use sim::battle::{Battle, Order, OutcomeReason, Setup, SquadState, Tally};
+use sim::battle::{Battle, HouseState, Order, OutcomeReason, Setup, SquadState, Tally};
 use sim::bots::{Bot, BotKind};
 use sim::contracts::{EventCode, TICK_HZ, Team};
 use sim::map::{MapKind, MapOpts};
@@ -55,6 +55,29 @@ pub struct Run {
     pub tally: Tally,
     /// Flips by the order the company held, for finding jitter.
     pub flips_by: Vec<(String, u64)>,
+    /// What day 4's places did (the town, the ford, the night).
+    pub places: PlaceCounts,
+}
+
+/// Day 4's places in one battle (AGENTS.md rule 4: every rule prints its counts).
+#[derive(Clone, Debug, Default)]
+pub struct PlaceCounts {
+    /// The town: houses fired and fallen, people burnt and freed, and the freed men who fell in.
+    pub fired: u32,
+    pub fallen: u32,
+    pub burnt: u32,
+    pub freed: u32,
+    pub freed_men: u32,
+    /// The ford: groups come in and gone, people saved and lost, raiders' companies come in.
+    pub groups: u32,
+    pub groups_done: u32,
+    pub saved: u32,
+    pub lost: u32,
+    pub raiders: u32,
+    /// The night: it fell, the relief's companies came, and the most torches lit at once.
+    pub night: bool,
+    pub relief: u32,
+    pub torches: u32,
 }
 
 fn order_name(o: &Order) -> &'static str {
@@ -68,12 +91,9 @@ pub fn run_one(seed: u32, o: &Opts) -> Run {
     let mut bots = [Bot::new(o.us, 0), Bot::new(o.them, 1)];
     let limit = ((b.time_limit() + GRACE_S) * TICK_HZ as f64) as u32;
     let mut run = Run { seed, ..Run::default() };
-    for t in 0..2u8 {
-        run.men_start[t as usize] = b.squads.iter().filter(|s| s.team == t).map(|s| s.alive as usize).sum();
-    }
-    let n = b.soldiers.len();
+
     let mut last: Vec<(f64, f64)> = b.soldiers.iter().map(|m| (m.x, m.y)).collect();
-    let mut step: Vec<(f64, f64)> = vec![(0.0, 0.0); n];
+    let mut step: Vec<(f64, f64)> = vec![(0.0, 0.0); b.soldiers.len()];
     let mut states: Vec<SquadState> = b.squads.iter().map(|s| s.state).collect();
     let mut idle_since: Vec<u32> = vec![0; b.squads.len()];
     let settled = (SETTLED_S * TICK_HZ as f64) as u32;
@@ -85,6 +105,17 @@ pub fn run_one(seed: u32, o: &Opts) -> Run {
             }
         }
         b.step(1);
+        // Companies join mid-battle (the ford's civilians and raiders, the night's relief, the freed).
+        for m in &b.soldiers[last.len()..] {
+            last.push((m.x, m.y));
+            step.push((0.0, 0.0));
+        }
+        for s in &b.squads[states.len()..] {
+            states.push(s.state);
+            idle_since.push(b.tick);
+        }
+        let lit = (0..b.squads.len()).filter(|&i| b.torch_lit(i)).count() as u32;
+        run.places.torches = run.places.torches.max(lit);
         for e in b.drain_events() {
             if e.code == EventCode::Hit && run.first_blow_s.is_none() {
                 run.first_blow_s = Some(e.tick as f64 / TICK_HZ as f64);
@@ -143,8 +174,30 @@ pub fn run_one(seed: u32, o: &Opts) -> Run {
     run.outcome = b.outcome();
     run.length_s = b.time();
     run.tally = b.tally.clone();
+    let p = &b.places;
+    let pc = &mut run.places;
+    pc.fired = p.houses.iter().filter(|h| h.state != HouseState::Standing).count() as u32;
+    pc.fallen = p.houses.iter().filter(|h| h.state == HouseState::Fallen).count() as u32;
+    pc.burnt = p.burnt_people;
+    pc.freed = p.freed_people;
+    // The freed fall in at the tick after the town is taken, which a sweep stops before: count what will come.
+    pc.freed_men = if p.freed_people > 0 { p.freed_people.min(b.tune.places.town.freed_men as u32) } else { 0 };
+    if let Some(f) = &p.ford {
+        pc.groups = f.groups.iter().filter(|g| g.squad.is_some()).count() as u32;
+        pc.groups_done = f.groups.iter().filter(|g| g.done).count() as u32;
+        pc.saved = f.saved();
+        let came: u32 = f.groups.iter().filter_map(|g| g.squad).map(|id| b.squads[id as usize].full as u32).sum();
+        let here: u32 = f.groups.iter().filter(|g| !g.done).filter_map(|g| g.squad).map(|id| b.squads[id as usize].alive as u32).sum();
+        pc.lost = came - pc.saved - here;
+        pc.raiders = f.waves.iter().map(|w| w.squads.len() as u32).sum();
+    }
+    pc.night = p.nightfall.is_some();
+    pc.relief = p.relief.len() as u32;
+    // Soldiers, not civilians; everyone who came to the battle, those who joined it late included.
     for t in 0..2u8 {
-        run.men_left[t as usize] = b.squads.iter().filter(|s| s.team == t && s.on_field()).map(|s| s.alive as usize).sum();
+        let troops = || b.squads.iter().filter(|s| s.team == t && s.kind != sim::contracts::Kind::Folk);
+        run.men_start[t as usize] = troops().map(|s| s.full as usize).sum();
+        run.men_left[t as usize] = troops().filter(|s| s.on_field()).map(|s| s.alive as usize).sum();
     }
     run
 }
@@ -255,12 +308,13 @@ pub fn report(o: &Opts, runs: &[Run]) {
     let sum = |f: &dyn Fn(&Tally) -> f64| runs.iter().map(|r| f(&r.tally)).sum::<f64>();
     let per = |x: f64| x / n.max(1.0);
     let (lost0, lost1): (usize, usize) = runs.iter().fold((0, 0), |(a, c), r| (a + r.men_start[0] - r.men_left[0], c + r.men_start[1] - r.men_left[1]));
+    let (came0, came1): (usize, usize) = runs.iter().fold((0, 0), |(a, c), r| (a + r.men_start[0], c + r.men_start[1]));
     println!(
-        "men lost per battle: team 0 {:.1} of {}, team 1 {:.1} of {}",
+        "men lost per battle (soldiers, the late-comers included): team 0 {:.1} of {:.1}, team 1 {:.1} of {:.1}",
         per(lost0 as f64),
-        runs.first().map_or(0, |r| r.men_start[0]),
+        per(came0 as f64),
         per(lost1 as f64),
-        runs.first().map_or(0, |r| r.men_start[1])
+        per(came1 as f64)
     );
     println!(
         "blight rules per battle: {:.1} jets, {:.1} burns ({:.1} harm, {:.2} kills), {:.1} scorch morale, {:.1} bites; impact blows {:.1} started, {:.1} landed, {:.1} missed; {:.0} press ticks",
@@ -275,6 +329,41 @@ pub fn report(o: &Opts, runs: &[Run]) {
         per(sum(&|t| t.missed as f64)),
         per(sum(&|t| t.presses as f64)),
     );
+    let pc = |f: &dyn Fn(&PlaceCounts) -> u32| runs.iter().map(|r| f(&r.places)).sum::<u32>();
+    let nights = runs.iter().filter(|r| r.places.night).count();
+    let at_dawn = runs.iter().filter(|r| r.outcome.is_some_and(|(_, why)| why == OutcomeReason::Dawn)).count();
+    let wins_at_dawn = runs.iter().filter(|r| r.outcome == Some((0, OutcomeReason::Dawn))).count();
+    match o.kind {
+        MapKind::Town => println!(
+            "town per battle: {:.2} houses fired, {:.2} fallen; {:.2} people burnt, {:.2} freed ({} battles freed some; {:.2} freed men fall in)",
+            per(pc(&|p| p.fired) as f64),
+            per(pc(&|p| p.fallen) as f64),
+            per(pc(&|p| p.burnt) as f64),
+            per(pc(&|p| p.freed) as f64),
+            runs.iter().filter(|r| r.places.freed > 0).count(),
+            per(pc(&|p| p.freed_men) as f64),
+        ),
+        MapKind::Ford => println!(
+            "ford per battle: {:.2} groups came, {:.2} gone; {:.2} saved, {:.2} lost of 20; {:.2} raider companies; {} battles saved nobody",
+            per(pc(&|p| p.groups) as f64),
+            per(pc(&|p| p.groups_done) as f64),
+            per(pc(&|p| p.saved) as f64),
+            per(pc(&|p| p.lost) as f64),
+            per(pc(&|p| p.raiders) as f64),
+            runs.iter().filter(|r| r.places.groups_done == r.places.groups && r.places.groups > 0 && r.places.saved == 0).count(),
+        ),
+        _ => {}
+    }
+    if o.kind != MapKind::Field && nights == 0 {
+        println!("night: fell in 0 of {} battles; decided at dawn {at_dawn}", runs.len());
+    } else if o.kind != MapKind::Field {
+        println!(
+            "night: fell in {nights} of {} battles; relief {:.2} companies per night; up to {:.1} torches lit; decided at dawn {at_dawn} (won by team 0 at dawn: {wins_at_dawn})",
+            runs.len(),
+            pc(&|p| p.relief) as f64 / nights.max(1) as f64,
+            runs.iter().filter(|r| r.places.night).map(|r| r.places.torches as f64).sum::<f64>() / nights.max(1) as f64,
+        );
+    }
     let pass = |ok: bool| if ok { "PASS" } else { "FAIL" };
     println!("gate: standing reversals < 0.1 /s/man: {}", pass(rev_rate < 0.1));
     println!("gate: state flips < 10 /squad-min: {}", pass(flip_rate < 10.0));
@@ -284,6 +373,9 @@ pub fn report(o: &Opts, runs: &[Run]) {
     }
     if o.us == BotKind::Idle {
         println!("gate: doing nothing wins 0%: {share:.1}% {}", pass(w0 == 0));
+        if o.kind != MapKind::Field {
+            println!("gate: doing nothing no longer wins at dawn: {wins_at_dawn} of {} {}", runs.len(), pass(wins_at_dawn == 0));
+        }
     }
     if undecided > 0 {
         println!("gate: every battle ends: {undecided} undecided FAIL");

@@ -20,8 +20,9 @@ export const MAX_LIGHTS = 48;
 
 /**
  * Pass 2, once per art pixel: outlines drawn on the farther pixel and coloured from the nearer neighbour,
- * the night's moonlight and banded torch pools, and the pause grey. `uOrigin` is the camera's whole-art-pixel
- * position, so the night's dither stays fixed to the world while the view pans (DECISIONS.md D-06).
+ * the night's moonlight and banded torch pools, and the pause grey (which leaves the marks, alpha 0, in colour).
+ * `uOrigin` is the camera's whole-art-pixel position, so the night's dither stays fixed to the world while the view
+ * pans (DECISIONS.md D-06).
  */
 export const CELL_FS = /* glsl */ `
 precision highp float;
@@ -67,7 +68,8 @@ void main() {
     col = mix(col, col * tint + vec3(0.0, 0.004, 0.018) * (1.0 - q), uNightK);
   }
 
-  if (uGrey > 0.0) {
+  // the pause greys the world, not its marks: a mark writes alpha 0 (marks.ts; 01-flow.md §2 "Pause")
+  if (uGrey > 0.0 && texelFetch(tColor, ivec2(c), 0).a > 0.5) {
     float l = dot(col, vec3(0.3, 0.55, 0.15));
     col = mix(col, vec3(l) * vec3(0.92, 0.90, 1.0), 0.55 * uGrey);
   }

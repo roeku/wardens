@@ -4,6 +4,7 @@
 mod assault;
 mod field;
 mod ford;
+pub mod names;
 pub mod path;
 mod relief;
 

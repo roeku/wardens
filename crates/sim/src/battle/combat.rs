@@ -72,7 +72,8 @@ impl Battle {
                 let w = self.squads.get(ward as usize).filter(|w| w.on_field())?;
                 Some((self.centre(w.id as usize), a.guard_r))
             }
-            _ if !s.spec.ranged() && s.kind != Kind::Horse && s.kind != Kind::Captain && !s.freed => {
+            // A company that deals no harm (the ford's civilians) defends nobody.
+            _ if !s.spec.ranged() && s.kind != Kind::Horse && s.kind != Kind::Captain && !s.freed && s.spec.damage > 0.0 => {
                 let cap = self.captain_at(s.team)?;
                 (cap.dist(self.centre(i)) <= a.defend_within).then_some((cap, a.defend_enemy))
             }

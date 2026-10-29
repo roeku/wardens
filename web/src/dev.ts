@@ -1,5 +1,6 @@
 import type { BattleView } from './battle/battle';
-import { SQUAD_F32, SQUAD_STATE, squadBits, squadUnit, KIND_ORDER } from './contracts';
+import { SQUAD_F32, SQUAD_STATE, squadBits, squadUnit, KIND_ORDER, type Deed, type Source } from './contracts';
+import { inputHooks, type Input } from './input';
 import { FWD, PITCH, ZOOMS } from './view/camera';
 import { FOG_NEVER, FOG_SEEN, FOG_SIGHT } from './view/fog';
 import type { View } from './view/view';
@@ -63,7 +64,28 @@ function strays(a: Uint8Array, b: Uint8Array, w: number, h: number, s: { dx: num
   }
 }
 
-export function installDev(view: View, battle: BattleView): void {
+/** A synthetic pointer event on the canvas, at client (x, y). */
+function pointer(view: View, type: string, x: number, y: number, o: { id?: number; touch?: boolean; button?: number } = {}): void {
+  const touch = o.touch ?? false;
+  const down = type === 'pointerdown' || type === 'pointermove';
+  view.canvas.dispatchEvent(
+    new PointerEvent(type, {
+      pointerId: o.id ?? (touch ? 11 : 1),
+      pointerType: touch ? 'touch' : 'mouse',
+      isPrimary: (o.id ?? 0) < 12,
+      clientX: x,
+      clientY: y,
+      button: type === 'pointermove' ? -1 : (o.button ?? 0),
+      buttons: down ? 1 << (o.button ?? 0) : 0,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
+
+export function installDev(view: View, battle: BattleView, input?: Input): void {
   /** Each company: id, team, kind, unit, state, men alive / full, morale (0..1 of max), anchor; and the outcome. */
   function battleState() {
     const sim = battle.sim;
@@ -244,6 +266,75 @@ export function installDev(view: View, battle: BattleView): void {
       const { px, dpr, aw, ah } = view.renderer.size;
       const c = view.camera;
       return { px, dpr, aw, ah, zoom: c.s, focus: [c.focus.x, c.focus.y], sub: [c.sub.x, c.sub.y], origin: [c.origin.x, c.origin.y] };
+    },
+    // ------------------------------------------------------------------------------- input and marks (day 4)
+    input,
+    /** The hooks the input calls (voice's captain hold, mute). */
+    hooks: inputHooks,
+    /** The client point of sim ground point (x, y) as last drawn. */
+    toScreen(x: number, y: number): { x: number; y: number } {
+      const r = view.canvas.getBoundingClientRect();
+      const p = input!.screen.project(x, battle.groundH(x, y), y, { x: 0, y: 0 });
+      return { x: p.x + r.left, y: p.y + r.top };
+    },
+    /** Soldier `id` as drawn: his feet and the top of his head in client points, his company and team. */
+    man(id: number) {
+      const at = battle.figures.drawnAt(id);
+      const rec = battle.records.men.find((m) => m.id === id);
+      if (!at || !rec) return null;
+      const r = view.canvas.getBoundingClientRect();
+      const s = input!.screen;
+      const feet = s.fromArt(at.px, at.py, { x: 0, y: 0 });
+      return { feet: { x: feet.x + r.left, y: feet.y + r.top }, squad: battle.views.u32[id] & 0xffff, team: rec.team, captain: rec.captain, unit: rec.unit, commander: rec.commander };
+    },
+    /** What a press at client (x, y) would hit now. */
+    hit(x: number, y: number, touch = false, seen?: Parameters<NonNullable<Input>['battle']['hits']['test']>[3]) {
+      const r = view.canvas.getBoundingClientRect();
+      return input!.battle.hits.test(x - r.left, y - r.top, touch, seen);
+    },
+    /** Synthetic pointer events: one event, a tap, a press-and-slide, a drag along client points. */
+    pointer: (type: string, x: number, y: number, o: { id?: number; touch?: boolean; button?: number } = {}) => pointer(view, type, x, y, o),
+    tap(x: number, y: number, o: { touch?: boolean; slide?: [number, number]; holdMs?: number } = {}): Promise<void> | void {
+      pointer(view, 'pointerdown', x, y, o);
+      const end = () => {
+        const [dx, dy] = o.slide ?? [0, 0];
+        if (dx || dy) for (let i = 1; i <= 4; i++) pointer(view, 'pointermove', x + (dx * i) / 4, y + (dy * i) / 4, o);
+        pointer(view, 'pointerup', x + (o.slide?.[0] ?? 0), y + (o.slide?.[1] ?? 0), o);
+      };
+      if (o.holdMs) return sleep(o.holdMs).then(end);
+      end();
+    },
+    async drag(pts: [number, number][], o: { touch?: boolean; stepMs?: number; frames?: boolean } = {}): Promise<void> {
+      pointer(view, 'pointerdown', pts[0][0], pts[0][1], o);
+      for (let i = 1; i < pts.length; i++) {
+        pointer(view, 'pointermove', pts[i][0], pts[i][1], o);
+        if (o.stepMs) await sleep(o.stepMs);
+      }
+      const z = pts[pts.length - 1];
+      pointer(view, 'pointerup', z[0], z[1], o);
+    },
+    /** Gives an order as the input would (with its marks). */
+    issue(deed: Deed, src: Source = 'typed') {
+      return battle.issue(deed, src);
+    },
+    select(id: number | null): void {
+      if (id === null) input?.battle.deselect();
+      else input?.battle.select(id);
+    },
+    ui() {
+      return { ...battle.ui, mode: input?.pointer.mode, drawing: battle.clock.drawing, marks: battle.marks.stats() };
+    },
+    orders() {
+      return battle.orders;
+    },
+    /** Runs `n` frames of `dt` at once (game frames: the sim, the input, the marks), then renders. */
+    frames(n: number, dt = 1 / 60): void {
+      for (let i = 0; i < n; i++) {
+        battle.frame(dt);
+        if (!battle.clock.paused) view.time += dt;
+        input?.frame(dt);
+      }
+      view.render();
     },
     /**
      * Pans `steps` times by `step` art pixels of screen travel and checks that every change of the art-pixel

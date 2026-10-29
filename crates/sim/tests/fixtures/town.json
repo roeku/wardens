@@ -1,0 +1,8 @@
+{
+  "seed": 3,
+  "map": { "kind": "town", "width": 48 },
+  "tick": 3600,
+  "tune": { "outcome": { "battle_s": 100.0 } },
+  "bots": [{ "team": 0, "bot": "commander" }, { "team": 1, "bot": "garrison" }],
+  "log": []
+}

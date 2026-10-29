@@ -35,7 +35,7 @@ impl Battle {
         let team = self.squads[c].team;
         let man = self.squads[c].soldiers[0];
         let out = self.squads[c].ride.out;
-        let companies: Vec<usize> = (0..self.squads.len()).filter(|&j| self.squads[j].team == team && self.squads[j].standing() && self.squads[j].kind != Kind::Captain).collect();
+        let companies: Vec<usize> = (0..self.squads.len()).filter(|&j| self.squads[j].team == team && self.squads[j].standing() && self.squads[j].kind != Kind::Captain && !self.civilian(j)).collect();
         let speed = self.squads[c].speed(&self.tune);
         let here = self.soldiers[man].pos();
         if companies.is_empty() {

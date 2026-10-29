@@ -1,11 +1,12 @@
 import init, { Battle, version } from './sim-pkg/sim_wasm.js';
 import { BattleView } from './battle/battle';
 import { installDev } from './dev';
-import { bindBattleKeys } from './input/battle-keys';
-import { bindCameraControls } from './input/camera-controls';
+import { installInput } from './input';
 import { makeLandInWorker, makeLandInline } from './view/land';
+import { installPlaces } from './view/places';
 import type { Tier } from './view/renderer';
 import { View } from './view/view';
+import { installVoice } from './voice/live/live';
 
 // URL flags (docs/spec/01-flow.md §5): ?seed= ?map= (width) ?army=big ?px= ?tier=, ?kind=keep|town|ford for now,
 // ?land=inline|worker to choose where the land is made (the worker by default, 03-land.md §10), ?pilot=1 for the
@@ -36,9 +37,10 @@ async function main(): Promise<void> {
     enemy: params.get('enemy') ?? defaultEnemy(kind),
   });
   console.log(`[battle] ${battle.soldier_count()} men in ${battle.squad_count()} companies, ready in ${(performance.now() - t1).toFixed(1)} ms`);
-  if (import.meta.env.DEV) installDev(view, play);
-  const controls = bindCameraControls(view, () => (play.follow = false));
-  bindBattleKeys(play);
+  const input = installInput(view, play);
+  if (import.meta.env.DEV) installDev(view, play, input);
+  installVoice(play);
+  installPlaces(view, play, wasm.memory, tier);
   window.addEventListener('resize', () => view.resize());
 
   if (params.has('perf')) {
@@ -55,7 +57,7 @@ async function main(): Promise<void> {
     last = now;
     play.frame(dt);
     if (!play.clock.paused) view.time += dt;
-    controls(dt);
+    input.frame(dt);
     view.render();
     play.perf.mark('render');
     play.perf.end();

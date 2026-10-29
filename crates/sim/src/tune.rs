@@ -201,7 +201,8 @@ impl Default for Units {
             archer: unit(Kind::Archer, json!({})),
             horse: unit(Kind::Horse, json!({})),
             levy: unit(Kind::Levy, json!({})),
-            folk: unit(Kind::Folk, json!({})),
+            // Civilians walk on or run; they never break (out/decisions-d4-places.md).
+            folk: unit(Kind::Folk, json!({ "never_routes": true })),
             captain: unit(Kind::Captain, json!({})),
             blightman: unit(Kind::Levy, json!({})),
             troll: unit(
@@ -1035,6 +1036,147 @@ impl WorksTune {
     }
 }
 
+/// The village under the torch (04-battle.md §8; 03-land.md §7 "Town"): five houses of three people round the
+/// town's green, the first fired at 22 s and then one every 26 s, each burning 24 s before it falls in on its
+/// people. Taking the town frees everyone in the houses still standing. The houses' places are 03-land's town
+/// layout, as (east, south) offsets from the site with their (width, depth). The order they burn in, and the freed
+/// men's company, are chosen (out/decisions-d4-places.md).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TownTune {
+    pub people: u16,
+    pub first_s: f64,
+    pub every_s: f64,
+    pub burn_s: f64,
+    /// A fallen house smoulders this long (24 + 50 s); a doused one smokes this long (03-land.md §7).
+    pub smoulder_s: f64,
+    pub doused_s: f64,
+    /// `[east, south, width, depth]` of each house from the town's centre.
+    pub houses: Vec<[f64; 4]>,
+    /// A freed village sends this many men to fall in behind the captain (01-flow.md §4 "The freed").
+    pub freed_men: u16,
+}
+
+impl Default for TownTune {
+    fn default() -> TownTune {
+        TownTune {
+            people: 3,
+            first_s: 22.0,
+            every_s: 26.0,
+            burn_s: 24.0,
+            smoulder_s: 74.0,
+            doused_s: 12.0,
+            houses: vec![[-1.75, -1.0, 0.95, 0.7], [0.95, -1.8, 0.75, 0.95], [2.0, 0.35, 0.7, 1.0], [0.2, 1.85, 1.05, 0.7], [-1.9, 1.1, 0.8, 0.75]],
+            freed_men: 6,
+        }
+    }
+}
+
+/// The ford (04-battle.md §8 "Ford"): four groups of five civilians at 1, 31, 61 and 91 s, alternate groups by the
+/// far ford, walking 0.95 and running 1.6 when an enemy is within 5; the raiders' waves at 14, 37, 67 and 97 s. Who
+/// is in each wave, where they come from and when a group has left are chosen (out/decisions-d4-places.md).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FordTune {
+    pub groups_s: Vec<f64>,
+    pub group_men: u16,
+    pub walk: f64,
+    pub run: f64,
+    pub run_r: f64,
+    pub waves_s: Vec<f64>,
+    /// The units of each wave, by the waves' order.
+    pub waves: Vec<Vec<Unit>>,
+    /// A group has left the field when its men's centre is this close to the west exit.
+    pub leave_r: f64,
+    /// Waves enter this far inside the east edge, alternately at its north and south ends, this far from them.
+    pub wave_in: f64,
+    pub wave_end: f64,
+    /// The refugees' wagons stand this far off the road, this far west of the east entry.
+    pub wagons_off: f64,
+    pub wagons_in: f64,
+}
+
+impl Default for FordTune {
+    fn default() -> FordTune {
+        use Unit::*;
+        FordTune {
+            groups_s: vec![1.0, 31.0, 61.0, 91.0],
+            group_men: 5,
+            walk: 0.95,
+            run: 1.6,
+            run_r: 5.0,
+            waves_s: vec![14.0, 37.0, 67.0, 97.0],
+            waves: vec![vec![Drake, BlightMan, BlightMan], vec![BlightMan, Troll, BlightMan], vec![Drake, Drake, BlightMan], vec![Troll, BlightMan, BlightMan]],
+            leave_r: 1.5,
+            wave_in: 2.5,
+            wave_end: 3.5,
+            wagons_off: 2.5,
+            wagons_in: 3.5,
+        }
+    }
+}
+
+/// The night (04-battle.md §8 "Night"; 02-look.md §3; 03-land.md §8): the relief from the east, the torches and the
+/// fires. The lights' reach and strength are 02-look's table (sent with the battle's lights, so the view draws what
+/// the rules see).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct NightTune {
+    /// The relief comes this long after nightfall: this share of the garrison's starting companies, from the east.
+    pub relief_s: f64,
+    pub relief_share: f64,
+    /// It enters this far inside the east edge.
+    pub relief_in: f64,
+    /// Torches give an army away within its spread + this; fires light this far.
+    pub torch_r: f64,
+    pub fire_sight: f64,
+    /// Our companies light their torches in order along the line, at `first + step·index` after nightfall; the
+    /// enemy all at once.
+    pub torch_first_s: f64,
+    pub torch_step_s: f64,
+    pub foe_torch_s: f64,
+    /// The night's level eases toward 1 at this rate after nightfall, and back at `dawn_ease` after dawn.
+    pub ease: f64,
+    pub dawn_ease: f64,
+    /// `[reach in tiles, strength]` of a torch, a smouldering ruin and a camp, shrine or wagons fire; a burning
+    /// house's reach grows from `house[0]` to `house[1]` over `house_grow_s`, at strength `house[2]`.
+    pub torch: [f64; 2],
+    pub ruin: [f64; 2],
+    pub fire: [f64; 2],
+    pub house: [f64; 3],
+    pub house_grow_s: f64,
+}
+
+impl Default for NightTune {
+    fn default() -> NightTune {
+        NightTune {
+            relief_s: 6.0,
+            relief_share: 0.5,
+            relief_in: 1.5,
+            torch_r: 0.8,
+            fire_sight: 4.0,
+            torch_first_s: 0.7,
+            torch_step_s: 0.45,
+            foe_torch_s: 2.4,
+            ease: 0.7,
+            dawn_ease: 0.9,
+            torch: [2.6, 1.0],
+            ruin: [1.3, 0.6],
+            fire: [2.2, 0.9],
+            house: [1.5, 4.0, 1.15],
+            house_grow_s: 6.0,
+        }
+    }
+}
+
+/// The places of day 4: the village under the torch, the ford and the night.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct PlacesTune {
+    #[serde(default)]
+    pub town: TownTune,
+    #[serde(default)]
+    pub ford: FordTune,
+    #[serde(default)]
+    pub night: NightTune,
+}
+
 /// The garrison policy (04-battle.md §7 "Garrison").
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct GarrisonTune {
@@ -1169,18 +1311,36 @@ impl Default for QuarryTune {
     }
 }
 
+/// The raiders at the ford (04-battle.md §7 "Raiders"): archers shoot troops within 9; foot go for troops within 4
+/// or closer than 0.8 of the civilians' distance. They think as often as the garrison (chosen).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RaidersTune {
+    pub think_s: f64,
+    pub archer_r: f64,
+    pub foot_r: f64,
+    pub foot_share: f64,
+}
+
+impl Default for RaidersTune {
+    fn default() -> RaidersTune {
+        RaidersTune { think_s: 1.5, archer_r: 9.0, foot_r: 4.0, foot_share: 0.8 }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BotTune {
     pub garrison: GarrisonTune,
     pub general: GeneralTune,
     pub quarry: QuarryTune,
+    #[serde(default)]
+    pub raiders: RaidersTune,
     /// The mindless charge and the sensible commander think this often (chosen).
     pub charge_think_s: f64,
 }
 
 impl Default for BotTune {
     fn default() -> BotTune {
-        BotTune { garrison: GarrisonTune::default(), general: GeneralTune::default(), quarry: QuarryTune::default(), charge_think_s: 1.0 }
+        BotTune { garrison: GarrisonTune::default(), general: GeneralTune::default(), quarry: QuarryTune::default(), raiders: RaidersTune::default(), charge_think_s: 1.0 }
     }
 }
 
@@ -1206,6 +1366,8 @@ pub struct Tune {
     pub orders: OrdersTune,
     #[serde(default)]
     pub works: WorksTune,
+    #[serde(default)]
+    pub places: PlacesTune,
     pub bots: BotTune,
 }
 

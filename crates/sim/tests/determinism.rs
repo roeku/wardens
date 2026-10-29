@@ -18,6 +18,10 @@ const MIRROR: &str = include_str!("fixtures/mirror.json");
 const MIRROR_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mirror.hashes");
 const ORDERS: &str = include_str!("fixtures/orders.json");
 const ORDERS_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/orders.hashes");
+const TOWN: &str = include_str!("fixtures/town.json");
+const TOWN_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/town.hashes");
+const FORD: &str = include_str!("fixtures/ford.json");
+const FORD_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ford.hashes");
 const EVERY: u32 = 300;
 
 fn check(replay: &str, golden: &str) -> usize {
@@ -102,4 +106,32 @@ fn the_order_language_replay_matches_the_golden_hashes() {
         t.arrows,
         b.outcome()
     );
+}
+
+/// Day 4's places (04-battle §8): `town.json` (the village under the torch on a 100 s day, so its fires, the night's
+/// torches and the relief all come within 120 s, the commander against the garrison) and `ford.json` (the ford's
+/// civilians and the raiders' waves, the commander against the raiders, stakes built). Both are checked in WASM too
+/// (crates/sim-wasm/tests/places.rs).
+#[test]
+fn the_places_replays_match_the_golden_hashes() {
+    let n = check(TOWN, TOWN_GOLDEN);
+    let b = Replay::from_json(TOWN).unwrap().run().unwrap();
+    let p = &b.places;
+    let fired = p.houses.iter().filter(|h| h.state != sim::battle::HouseState::Standing).count();
+    assert!(fired >= 4 && p.nightfall.is_some() && p.relief_sent && !p.relief.is_empty(), "the town replay exercises fire, night and relief");
+    let torches = (0..b.squads.len()).filter(|&i| b.torch_lit(i)).count();
+    println!(
+        "native town replay: {n} hashes match; {fired} houses fired, {} people burnt; night at {:?}, {} relief companies, {torches} torches lit at the end; outcome {:?}",
+        p.burnt_people,
+        p.nightfall,
+        p.relief.len(),
+        b.outcome()
+    );
+    let n = check(FORD, FORD_GOLDEN);
+    let b = Replay::from_json(FORD).unwrap().run().unwrap();
+    let f = b.places.ford.as_ref().unwrap();
+    let came = f.groups.iter().filter(|g| g.squad.is_some()).count();
+    let raiders: usize = f.waves.iter().map(|w| w.squads.len()).sum();
+    assert!(came == 4 && raiders > 0, "the ford replay brings every group and the raiders");
+    println!("native ford replay: {n} hashes match; {came} groups came, {} saved, {raiders} raider companies; outcome {:?}", f.saved(), b.outcome());
 }

@@ -9,4 +9,5 @@ node_modules
 *.safetensors
 .env
 .env.*
+!.env.example
 .DS_Store

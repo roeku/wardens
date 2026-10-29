@@ -2,7 +2,7 @@
 //! contact, the fog, the outcome, the bots and the armies. Kept separate so the frame packing does not depend on
 //! how the rules name things.
 
-use sim::battle::{Battle, Company, Setup, Squad};
+use sim::battle::{Battle, Company, Order, Setup, Squad};
 use sim::bots::{Bot, BotKind};
 use sim::contracts::{Command, Kind, Team, Tick};
 use sim::map::{MapKind, MapOpts};
@@ -29,6 +29,11 @@ pub fn unit(s: &Squad) -> u8 {
 /// The company breathes fire (drakes): a breathing beast faces its prey (04-battle.md §9 "Facing", priority 1).
 pub fn breathes(s: &Squad) -> bool {
     s.spec.breath > 0.0
+}
+
+/// The company is withdrawing: falling back still facing the foe (08-orders.md §3 "withdraw").
+pub fn withdrawing(s: &Squad) -> bool {
+    matches!(s.order, Order::Withdraw { .. })
 }
 
 /// The tick the man's breath cycle began (rear, jet at 0.4 s, bite at 2.3 s; 04-battle.md §5), `Tick::MAX` when none.

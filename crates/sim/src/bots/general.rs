@@ -185,11 +185,13 @@ pub(super) fn think(b: &Battle, team: Team, skill: u8, take_keep: bool, mem: &mu
     }
     rest(out, false);
     // Skill 2 keeps the captain out of the fight below 60% hp, away from the nearest foe, until he is back at the
-    // ride's 80%; then he rides again.
-    if skill >= 2 {
+    // ride's 80%; then he rides again. The warband's commander keeps him out all night: at dawn a living captain
+    // wins (04-battle.md §8 "Night"; out/decisions-d4-places.md).
+    let night_guard = take_keep && b.night;
+    if skill >= 2 || night_guard {
         let man = &b.soldiers[b.squads[cap].soldiers[0]];
         let share = man.hp / man.max_hp;
-        if share < g.captain_out {
+        if share < g.captain_out || night_guard {
             mem.captain_out = true;
         } else if share >= b.tune.ride.return_hp {
             mem.captain_out = false;

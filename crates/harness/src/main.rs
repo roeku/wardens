@@ -40,6 +40,13 @@ enum Cmd {
         /// Only checks whose name contains this.
         filter: Option<String>,
     },
+    /// Run day 4's places checks (04-battle §7–§8): the town's fires and the freed, the ford's groups and raiders,
+    /// the night's torches, relief, level and lights, each printing its counts. `places ford` runs only those whose
+    /// name contains the word.
+    Places {
+        /// Only checks whose name contains this.
+        filter: Option<String>,
+    },
     /// Print a replay file's map hash and state hashes every N ticks.
     Hashes {
         file: PathBuf,
@@ -58,7 +65,8 @@ enum Cmd {
         /// Team 0's bot: commander, charge or idle (or any bot).
         #[arg(long, default_value = "commander")]
         us: String,
-        /// Team 1's bot: general0..2 or garrison (default: general1 on the field, garrison otherwise).
+        /// Team 1's bot: general0..2, garrison or raiders (default: general1 on the field, raiders at the ford,
+        /// garrison otherwise).
         #[arg(long)]
         them: Option<String>,
         /// The armies: blight (the warband against the blight) or mirror (the symmetric human field).
@@ -149,10 +157,29 @@ fn run(cli: Cli) -> Result<(), String> {
             println!("orders: {} of {ran} checks pass", ran - failed as usize);
             if failed > 0 { Err(format!("{failed} order checks failed")) } else { Ok(()) }
         }
+        Cmd::Places { filter } => {
+            let mut failed = 0;
+            let mut ran = 0;
+            for (name, check) in sim::battle::place_checks::ALL {
+                if filter.as_ref().is_some_and(|f| !name.contains(f.as_str())) {
+                    continue;
+                }
+                let c = check();
+                ran += 1;
+                failed += (!c.pass) as u32;
+                println!("{} {}: {}", if c.pass { "PASS" } else { "FAIL" }, c.name, c.counts);
+            }
+            println!("places: {} of {ran} checks pass", ran - failed as usize);
+            if failed > 0 { Err(format!("{failed} places checks failed")) } else { Ok(()) }
+        }
         Cmd::Sweep { map, width, us, them, setup, seeds, from, verbose } => {
             let kind = map_kind(&map)?;
             sim::battle::Setup::named(&setup, kind)?;
-            let them = them.unwrap_or_else(|| if kind == MapKind::Field { "general1".into() } else { "garrison".into() });
+            let them = them.unwrap_or_else(|| match kind {
+                MapKind::Field => "general1".into(),
+                MapKind::Ford => "raiders".into(),
+                MapKind::Keep | MapKind::Town => "garrison".into(),
+            });
             let tune = match std::env::var("PROTO_TUNE") {
                 Ok(over) => Tune::with_override(&serde_json::from_str(&over).map_err(|e| format!("PROTO_TUNE: {e}"))?)?,
                 Err(_) => Tune::default(),

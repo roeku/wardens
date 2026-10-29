@@ -150,7 +150,7 @@ impl Battle {
             Deed::Rally => {
                 let Whom::Army(cap) = self.whom(team, &Who::Army)? else { unreachable!() };
                 self.command(cap, Order::Hold { face: None });
-                let ids: Vec<usize> = (0..self.squads.len()).filter(|&i| i != cap && self.squads[i].team == team && self.squads[i].standing()).collect();
+                let ids: Vec<usize> = (0..self.squads.len()).filter(|&i| i != cap && self.squads[i].team == team && self.squads[i].standing() && !self.civilian(i)).collect();
                 for i in ids {
                     self.recall(i);
                 }
@@ -179,7 +179,7 @@ impl Battle {
             Deed::Set { who, how } => {
                 let ids = match self.whom(team, who)? {
                     // "Everyone": the captain and every company still standing, with the army or not.
-                    Whom::Army(cap) => std::iter::once(cap).chain((0..self.squads.len()).filter(|&i| i != cap && self.squads[i].team == team && self.squads[i].standing())).collect(),
+                    Whom::Army(cap) => std::iter::once(cap).chain((0..self.squads.len()).filter(|&i| i != cap && self.squads[i].team == team && self.squads[i].standing() && !self.civilian(i))).collect(),
                     Whom::One(i) => vec![i],
                 };
                 let mut ways = Vec::new();
@@ -426,6 +426,8 @@ impl Battle {
     /// One of `team`'s own squads that can take orders.
     pub(super) fn own(&self, team: Team, id: SquadId) -> Result<usize, Refused> {
         match self.squads.get(id as usize) {
+            // The ford's civilians take no orders (places.rs).
+            Some(s) if s.team == team && s.kind == Kind::Folk => Err((P::new(s.x, s.y), format!("squad {id} are civilians"))),
             Some(s) if s.team == team && s.standing() => Ok(id as usize),
             Some(s) if s.team == team => Err((P::new(s.x, s.y), format!("squad {id} is {:?}", s.state))),
             _ => Err((self.here(team), format!("no squad {id} of ours"))),
@@ -583,7 +585,7 @@ impl Battle {
     /// away from the threat.
     fn regroup_point(&self, i: usize) -> P {
         let team = self.squads[i].team;
-        let others: Vec<usize> = (0..self.squads.len()).filter(|&j| j != i && self.squads[j].team == team && self.squads[j].standing() && self.squads[j].kind != Kind::Captain).collect();
+        let others: Vec<usize> = (0..self.squads.len()).filter(|&j| j != i && self.squads[j].team == team && self.squads[j].standing() && self.squads[j].kind != Kind::Captain && !self.civilian(j)).collect();
         let line = if others.is_empty() {
             self.captain_at(team).unwrap_or(self.centre(i))
         } else {

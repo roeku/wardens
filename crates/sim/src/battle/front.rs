@@ -121,8 +121,9 @@ impl Battle {
             n = P::new(-n.x, -n.y);
         }
         let face = atan2(n.y, n.x);
+        // Every company of the side but the captain, and never the ford's civilians (places.rs).
         let companies: Vec<usize> = (0..self.squads.len())
-            .filter(|&i| self.squads[i].team == team && self.squads[i].standing() && self.squads[i].kind != Kind::Captain && self.squads[i].alive > 0)
+            .filter(|&i| self.squads[i].team == team && self.squads[i].standing() && self.squads[i].kind != Kind::Captain && self.squads[i].alive > 0 && !self.civilian(i))
             .collect();
         let centroid = {
             let all: Vec<usize> = companies.iter().copied().chain(std::iter::once(cap)).collect();

@@ -108,7 +108,10 @@ interface Target {
   /** How far the thing reaches from `p`, for relative points. */
   ext: number;
   kind: 'here' | 'me' | 'place' | 'ground' | 'work' | 'foe' | 'ours' | 'frame';
+  /** The sim's site id; none for a place that is not a site (a ford). */
   site?: number;
+  /** The place's index in the field's places. */
+  index?: number;
   foe?: FieldFoe;
   company?: FieldCompany;
   ground?: FieldGround;
@@ -130,6 +133,9 @@ const dot = (a: P, b: P) => a.x * b.x + a.y * b.y;
 const sub = (a: P, b: P): P => ({ x: a.x - b.x, y: a.y - b.y });
 const angle = (d: P) => Math.atan2(d.y, d.x);
 const round2 = (p: P): P => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 });
+/** A point kept half a tile inside the map, when the field gives the map's size (the live game does). */
+const inMap = (p: P, f: Field): P =>
+  f.size ? { x: Math.min(Math.max(p.x, 0.5), f.size.w - 0.5), y: Math.min(Math.max(p.y, 0.5), f.size.h - 0.5) } : p;
 const foeSquad = (e: FieldFoe) => Number(e.id.replace(/\D/g, ''));
 const lc = (s: string) => s.toLowerCase().replace(/_/g, ' ');
 
@@ -277,8 +283,13 @@ function target(name: string, from: P, ctx: Ctx, self?: FieldCompany): Target {
   const { f } = ctx;
   if (name === 'HERE') return { name, p: from, ext: 0, kind: 'here' };
   if (name === 'ME') return { name, p: { x: f.captain.x, y: f.captain.y }, ext: 1, kind: 'me' };
-  const site = f.places.findIndex((p) => p.name === name);
-  if (site >= 0) return { name, p: { x: f.places[site].x, y: f.places[site].y }, ext: 1.5, kind: 'place', site };
+  const index = f.places.findIndex((p) => p.name === name);
+  if (index >= 0) {
+    const place = f.places[index];
+    // A place's site id is its own `site` when the live game gives one (null: not a site), else its index (fixtures).
+    const site = place.site === undefined ? index : (place.site ?? undefined);
+    return { name, p: { x: place.x, y: place.y }, ext: 1.5, kind: 'place', site, index };
+  }
   const g = f.ground.find((x) => x.name === name);
   if (g) return { name, p: groundPoint(g, from, ctx.fr.centre), ext: groundExt(g), kind: 'ground', ground: g };
   const w = f.works?.find((x) => x.name === name);
@@ -359,7 +370,7 @@ function route(o: ModelOrder, from: P, to: P, ctx: Ctx, self?: FieldCompany): P[
     const dir = { left: fr.left, right: neg(fr.left), front: fr.forward, back: neg(fr.forward) }[o.round];
     via.push(add(mid(from, to), dir, SIDE_SHIFT));
   }
-  return via.map(round2);
+  return via.map((p) => round2(inMap(p, ctx.f)));
 }
 
 /** 06-voice §6 "front on a feature": a line 3.2 tiles per line company, then planFront in the sim. */
@@ -486,7 +497,7 @@ function resolveOne(o: ModelOrder, ctx: Ctx): Resolved {
   const how = howOf(o);
   const need = (verb: string): string => o.to ?? refuse(`${verb} needs a target`);
   /** The point an order goes to: the target, or the point the rel names by it. */
-  const pointOf = (t: Target, u: Unit) => round2(o.rel ? relPoint(t, o, u.at, ctx, u.company) : t.p);
+  const pointOf = (t: Target, u: Unit) => round2(inMap(o.rel ? relPoint(t, o, u.at, ctx, u.company) : t.p, f));
   const notOurs = (t: Target) => {
     if (t.kind === 'ours' || t.kind === 'me') refuse(`will not attack our own (${lc(t.name)})`);
   };
@@ -500,6 +511,8 @@ function resolveOne(o: ModelOrder, ctx: Ctx): Resolved {
       return { do: 'move', target: t.name, to, via, fight, deed: { do: 'move', who: u.who, to, via, fight } };
     };
     const take = (t: Target): Part => {
+      // Taking a place that is not a site (a ford) is holding it: going there ready to fight.
+      if (t.site === undefined) return goTo(t, true);
       const via = route(o, u.at, t.p, ctx, u.company);
       return { do: 'take', target: t.name, to: t.p, via, deed: { do: 'take', who: u.who, site: t.site!, via } };
     };
@@ -527,7 +540,7 @@ function resolveOne(o: ModelOrder, ctx: Ctx): Resolved {
         const t = tgt(need('move'));
         if (t.kind === 'me' && !o.rel) return u.company ? { do: 'recall', target: 'ME', deed: { do: 'recall', id: u.company.id } } : { do: 'rally', deed: { do: 'rally' } };
         // Going to a village the blight holds is freeing it, whatever verb was used (DECISIONS.md D-07).
-        if (t.kind === 'place' && !o.rel && f.places[t.site!].type === 'village' && f.places[t.site!].holder === 'foe') return take(t);
+        if (t.kind === 'place' && !o.rel && f.places[t.index!].type === 'village' && f.places[t.index!].holder === 'foe') return take(t);
         return goTo(t, o.fight ?? false);
       }
       case 'advance':
