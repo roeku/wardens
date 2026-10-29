@@ -3,6 +3,9 @@
 
 mod compat;
 mod frame;
+mod input_api;
+mod places_api;
+mod voice_api;
 
 use sim::battle::Replay;
 use sim::contracts::{Command, Team};
